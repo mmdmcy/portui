@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  posix:
+    name: POSIX Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate POSIX launcher syntax
+        run: sh -n ./portui.sh
+
+      - name: Run POSIX smoke tests
+        run: sh ./ci/test-posix.sh
+
+  windows:
+    name: Windows Smoke
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run PowerShell smoke tests
+        shell: powershell
+        run: .\ci\test-powershell.ps1
+
