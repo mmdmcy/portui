@@ -60,7 +60,7 @@ function Get-KeyValueData {
         throw "Missing file: $Path"
     }
 
-    $map = [ordered]@{}
+    $map = @{}
     foreach ($rawLine in [System.IO.File]::ReadAllLines($Path)) {
         $line = $rawLine.TrimEnd("`r")
         if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) {
@@ -125,7 +125,7 @@ function Load-Manifest {
 
     $manifestPath = Join-Path $ResolvedManifestDir 'manifest.env'
     $data = Get-KeyValueData -Path $manifestPath
-    $manifest = [ordered]@{
+    $manifest = @{
         Name = 'PortUI'
         Description = ''
     }
@@ -150,7 +150,7 @@ function Load-Manifest {
 }
 
 function New-Variant {
-    return [ordered]@{
+    return @{
         Program = ''
         Args = ''
         Cwd = ''
@@ -163,7 +163,7 @@ function Load-Action {
         [string]$Path
     )
 
-    $action = [ordered]@{
+    $action = @{
         ID = ''
         Title = ''
         Description = ''
@@ -274,7 +274,7 @@ function Resolve-Action {
     )
 
     $osName = Get-HostOSName
-    $resolved = [ordered]@{
+    $resolved = @{
         Program = $Action.Base.Program
         Args = $Action.Base.Args
         Cwd = $Action.Base.Cwd

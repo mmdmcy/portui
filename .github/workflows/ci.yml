@@ -18,7 +18,7 @@ jobs:
           - macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Validate POSIX launcher syntax
         run: sh -n ./portui.sh
@@ -31,9 +31,8 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Run PowerShell smoke tests
         shell: powershell
         run: .\ci\test-powershell.ps1
-
