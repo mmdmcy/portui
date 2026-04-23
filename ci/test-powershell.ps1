@@ -4,6 +4,10 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+$starterOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -List | Out-String
+if ($starterOutput -notmatch 'PortUI Starter') { throw 'Starter output missing starter manifest name.' }
+if ($starterOutput -notmatch 'Doctor \[doctor\]') { throw 'Starter output missing doctor action.' }
+
 $listOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -List | Out-String
 if ($listOutput -notmatch 'PortUI Demo') { throw 'List output missing manifest name.' }
 if ($listOutput -notmatch 'Git Version') { throw 'List output missing Git Version action.' }
@@ -46,6 +50,19 @@ if ($installOutput -notmatch 'Installed PortUI runtime into') { throw 'Install o
 $embeddedOutput = powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $projectDir 'portui.ps1') -Run doctor | Out-String
 if ($embeddedOutput -notmatch 'alpha=engine-demo') { throw 'Embedded project output missing project marker.' }
 
+$initRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('portui-init-' + [System.Guid]::NewGuid().ToString('N'))
+$ideaDir = Join-Path $initRoot 'idea'
+New-Item -ItemType Directory -Path $ideaDir -Force | Out-Null
+
+$initOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -InitProject $ideaDir | Out-String
+if ($initOutput -notmatch 'Created starter PortUI app in') { throw 'Init output missing success message.' }
+if (-not (Test-Path -LiteralPath (Join-Path $ideaDir 'portui\manifest.env'))) { throw 'Init did not create manifest.' }
+if (-not (Test-Path -LiteralPath (Join-Path $ideaDir '.portui-runtime\portui.ps1'))) { throw 'Init did not create vendored runtime.' }
+
+$initEmbeddedOutput = powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ideaDir 'portui.ps1') -Run doctor | Out-String
+if ($initEmbeddedOutput -notmatch 'project=idea') { throw 'Init project output missing project marker.' }
+
 Remove-Item -LiteralPath $tempRoot -Recurse -Force
+Remove-Item -LiteralPath $initRoot -Recurse -Force
 
 Write-Host 'PowerShell smoke tests passed.'

@@ -1,21 +1,19 @@
 # Manifest Spec
 
-PortUI supports two operating modes:
+PortUI is built around project-local apps.
 
-- single-manifest mode
+Main modes:
+
+- starter repo mode
+- initialized repo mode
+- direct manifest mode
 - workspace mode
 
-The main intended model is project-local PortUI:
+The first two are the primary intended workflows.
 
-- each repo keeps one `portui/` or `.portui/` app definition
-- the PortUI runtime is installed into that repo
-- the repo then runs PortUI through local wrappers like `./portui.sh`
+## App Layout
 
-Workspace mode and single-manifest mode are secondary tools built on the same runtime.
-
-## Project Layout
-
-PortUI app definitions can live in either of these layouts:
+Inside a repo, a PortUI app can live in either:
 
 ```text
 repo-name/
@@ -33,28 +31,48 @@ repo-name/
     actions/
 ```
 
-## Single-Manifest Layout
+## Starter Repo Mode
 
-PortUI can also run a manifest directly:
+This `portui` repo includes a built-in starter app under `.portui/`.
 
-```text
-my-portui-app/
-  manifest.env
-  actions/
-    01-doctor.env
-    02-build.env
-    03-dev.env
+That means a plain clone is already runnable:
+
+```bash
+sh ./portui.sh --list
 ```
 
-## Installing PortUI Into A Repo
+This is meant to support the “clone PortUI into a new idea folder and start editing there” workflow.
 
-From the source `portui` repo:
+## Initializing An Existing Repo
+
+Create a starter app in an existing repo and vendor the runtime:
+
+```bash
+sh ./portui.sh --init-project ../my-repo
+```
+
+This creates:
+
+```text
+my-repo/
+  portui/
+    manifest.env
+    actions/
+  .portui-runtime/
+  portui.sh
+  portui.ps1
+  portui.cmd
+```
+
+## Installing Or Refreshing The Runtime
+
+If a repo already has `portui/manifest.env` or `.portui/manifest.env`, vendor or refresh the runtime:
 
 ```bash
 sh ./portui.sh --install-project ../my-repo
 ```
 
-This installs:
+This updates the repo-local runtime files:
 
 ```text
 my-repo/
@@ -62,18 +80,15 @@ my-repo/
   portui.sh
   portui.ps1
   portui.cmd
-  portui/
 ```
-
-The project-local wrappers call the vendored runtime with the repo's own manifest directory. That is the intended way to make PortUI the repo's main TUI without depending on the central `portui` repo at runtime.
 
 ## `manifest.env`
 
 Recognized keys:
 
-- `NAME`: display name for the project
-- `DESCRIPTION`: short description shown in listings
-- `VARIABLE_<name>`: reusable variable definition
+- `NAME`
+- `DESCRIPTION`
+- `VARIABLE_<name>`
 
 Example:
 
@@ -117,18 +132,6 @@ PROGRAM=git
 ARGS=status|--short|--branch
 ```
 
-This avoids shell-splitting ambiguity while keeping manifests easy to author by hand.
-
-## Resolution Order
-
-PortUI resolves actions in this order:
-
-1. base keys
-2. `POSIX_*` overrides on Linux and macOS
-3. OS-specific overrides for the current host: `LINUX_*`, `MACOS_*`, or `WINDOWS_*`
-
-Later layers replace earlier `PROGRAM`, `ARGS`, and `CWD` values. Environment overrides merge by key, with later layers winning.
-
 ## Built-In Variables
 
 - `{{home}}`
@@ -146,43 +149,39 @@ Behavior:
 
 - `projectDir` resolves to the repository root when the manifest lives in `repo/portui` or `repo/.portui`
 - `projectId` defaults to the repository directory name
-- `workspaceDir` resolves to the active workspace root in workspace mode
-- manifest-defined variables can reference built-ins and each other
-- expansion is repeated for a small fixed number of passes
+- `workspaceDir` resolves to the active workspace root in workspace mode, or the parent of the project in project-local mode
+
+## Resolution Order
+
+PortUI resolves actions in this order:
+
+1. base keys
+2. `POSIX_*` overrides on Linux and macOS
+3. OS-specific overrides for the current host
+
+Later layers replace earlier `PROGRAM`, `ARGS`, and `CWD` values. Environment overrides merge by key.
 
 ## Execution Model
 
 - Linux and macOS run through `portui.sh`
 - Windows runs through `portui.ps1` or `portui.cmd`
-- repos can vendor the runtime under `.portui-runtime/` and expose local `portui.sh`, `portui.ps1`, and `portui.cmd` wrappers
+- repos can vendor the runtime under `.portui-runtime/`
+- repo-local `portui.sh`, `portui.ps1`, and `portui.cmd` wrappers call that vendored runtime
 - the runtime executes the resolved program directly with explicit argument arrays
 - the runtime changes into the resolved working directory before launch
-- timeouts are enforced by the host launcher
 
-## CLI Modes
+## Secondary Modes
 
-Project-local mode after vendoring:
-
-```bash
-(cd ../my-repo && sh ./portui.sh --list)
-(cd ../my-repo && sh ./portui.sh --run doctor)
-```
-
-Workspace mode examples:
-
-```bash
-sh ./portui.sh --list-projects
-sh ./portui.sh --project smaLLMs --list
-sh ./portui.sh --project GUITboard --run test
-```
-
-Single-manifest mode examples:
+Direct manifest mode:
 
 ```bash
 sh ./portui.sh --manifest-dir ./examples/demo --list
-sh ./portui.sh --manifest-dir ./examples/demo --run git-version
 ```
 
-## Intended Use
+Workspace mode:
 
-PortUI is for trusted local project workflows where one standardized terminal interface should be reused across many repos instead of rebuilt from scratch for each one.
+```bash
+sh ./portui.sh --workspace ../github --project smaLLMs --list
+```
+
+These are supported, but they are not the main point of PortUI.

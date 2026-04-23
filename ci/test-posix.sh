@@ -7,6 +7,10 @@ ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
 cd "$ROOT_DIR"
 
+starter_output=$(sh ./portui.sh --list)
+printf '%s\n' "$starter_output" | grep 'PortUI Starter' >/dev/null
+printf '%s\n' "$starter_output" | grep 'Doctor \[doctor\]' >/dev/null
+
 list_output=$(sh ./portui.sh --manifest-dir ./examples/demo --list)
 printf '%s\n' "$list_output" | grep 'PortUI Demo' >/dev/null
 printf '%s\n' "$list_output" | grep 'Git Version' >/dev/null
@@ -50,6 +54,18 @@ grep '%~dp0portui' "$temp_project_root/engine-demo/portui.cmd" >/dev/null
 embedded_output=$(sh "$temp_project_root/engine-demo/portui.sh" --run doctor)
 printf '%s\n' "$embedded_output" | grep 'alpha=engine-demo' >/dev/null
 
-rm -rf "$temp_project_root"
+init_project_root=$(mktemp -d)
+mkdir -p "$init_project_root/idea"
+
+init_output=$(sh ./portui.sh --init-project "$init_project_root/idea")
+printf '%s\n' "$init_output" | grep 'Created starter PortUI app in' >/dev/null
+test -f "$init_project_root/idea/portui/manifest.env"
+test -f "$init_project_root/idea/portui/actions/01-doctor.env"
+test -f "$init_project_root/idea/.portui-runtime/portui.sh"
+
+init_embedded_output=$(sh "$init_project_root/idea/portui.sh" --run doctor)
+printf '%s\n' "$init_embedded_output" | grep 'project=idea' >/dev/null
+
+rm -rf "$temp_project_root" "$init_project_root"
 
 printf '%s\n' 'POSIX smoke tests passed.'

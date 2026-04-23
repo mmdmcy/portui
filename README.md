@@ -2,15 +2,106 @@
 
 PortUI is a zero-dependency cross-platform terminal engine for project-local TUIs.
 
-The intended model is:
+The two workflows it is meant to support are:
 
-- define one `portui/` app inside a repo
-- install the PortUI runtime into that repo
-- run PortUI from that repo as the repo's main TUI on macOS, Linux, and Windows
+- clone `portui` into a new idea folder and start working there immediately
+- clone `portui` into an existing project, connect the wires, and use PortUI as that repo's portable TUI base
 
-That lets you reuse one standardized portable TUI base instead of rebuilding shell scripts, batch files, and terminal UI glue for every project.
+PortUI is not meant to force a central global install. The main idea is to reuse one portable TUI engine across repos instead of rebuilding terminal glue from scratch every time.
 
-## What PortUI Does
+## New Idea Workflow
+
+You can clone `portui` into a new folder and use it right away because the repo now ships with a starter app in [`.portui/`](./.portui).
+
+Linux or macOS:
+
+```bash
+git clone https://github.com/mmdmcy/portui.git my-idea
+cd my-idea
+sh ./portui.sh --list
+```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/mmdmcy/portui.git my-idea
+cd my-idea
+.\portui.ps1 -List
+```
+
+That starter app is only a base. You then edit `.portui/manifest.env` and `.portui/actions/` to turn the clone into your actual project.
+
+## Existing Project Workflow
+
+If a repo does not have a PortUI app yet, initialize one and vendor the runtime:
+
+Linux or macOS:
+
+```bash
+git clone https://github.com/mmdmcy/portui.git .portui-src
+sh ./.portui-src/portui.sh --init-project .
+```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/mmdmcy/portui.git .portui-src
+.\.portui-src\portui.ps1 -InitProject .
+```
+
+If a repo already has `portui/manifest.env` or `.portui/manifest.env`, just vendor or refresh the runtime:
+
+Linux or macOS:
+
+```bash
+sh ./.portui-src/portui.sh --install-project .
+```
+
+Windows PowerShell:
+
+```powershell
+.\.portui-src\portui.ps1 -InstallProject .
+```
+
+After either command, the target repo gets:
+
+```text
+repo-name/
+  .portui-runtime/
+  portui.sh
+  portui.ps1
+  portui.cmd
+  portui/ or .portui/
+```
+
+At that point the target repo is self-contained. You can delete the temporary PortUI source clone if you want.
+
+## Using PortUI Inside A Repo
+
+Once a repo has vendored PortUI, use the repo-local entrypoints:
+
+Linux or macOS:
+
+```bash
+sh ./portui.sh --list
+sh ./portui.sh --run doctor
+```
+
+Windows PowerShell:
+
+```powershell
+.\portui.ps1 -List
+.\portui.ps1 -Run doctor
+```
+
+Command Prompt:
+
+```cmd
+portui.cmd --list
+portui.cmd --run doctor
+```
+
+## What PortUI Owns
 
 PortUI gives you one declarative place to define:
 
@@ -18,13 +109,14 @@ PortUI gives you one declarative place to define:
 - working directories
 - environment overrides
 - per-OS command differences
-- shared built-in variables like project and workspace paths
+- preview, confirmation, logs, and timeouts
+- built-in path and project variables
 
-It is not a package manager and not a terminal emulator. It is a portable project-local TUI base with a manifest-driven runtime.
+It does not replace your project logic. It standardizes the TUI layer around that logic.
 
-## Project-Local Model
+## Project Layout
 
-Put a PortUI app inside a project using either:
+A PortUI app inside a repo can use either:
 
 ```text
 repo-name/
@@ -42,80 +134,30 @@ repo-name/
     actions/
 ```
 
-Then install the runtime into that project from the central `portui` repo.
+## Built-In Starter App
 
-## Quick Start
+This repo contains a built-in starter app in [`.portui/`](./.portui) so a plain clone is immediately usable.
 
-Install PortUI into a project that already has `portui/manifest.env` or `.portui/manifest.env`.
+Starter actions:
 
-Linux or macOS:
+- `doctor`
+- `list-files`
+- `git-status`
 
-```bash
-sh ./portui.sh --install-project ../GUITboard
-```
+If you want a clean project base, edit or replace those files after cloning.
 
-Windows PowerShell:
+## Maintainer Commands
 
-```powershell
-.\portui.ps1 -InstallProject ..\GUITboard
-```
+Main commands:
 
-That creates project-local runtime files in the target repo:
+- `--init-project DIR`
+  Creates a starter `portui/` app in a repo, then vendors the runtime.
+- `--install-project DIR`
+  Vendors or refreshes the runtime for a repo that already has a PortUI app.
+- `--manifest-dir DIR`
+  Runs one manifest directly.
 
-```text
-repo-name/
-  .portui-runtime/
-  portui.sh
-  portui.ps1
-  portui.cmd
-  portui/
-```
-
-After that, run PortUI from inside the target project.
-
-Linux or macOS:
-
-```bash
-sh ./portui.sh --list
-sh ./portui.sh --run test
-```
-
-Windows PowerShell:
-
-```powershell
-.\portui.ps1 -List
-.\portui.ps1 -Run test
-```
-
-Windows Command Prompt:
-
-```cmd
-portui.cmd --list
-portui.cmd --run test
-```
-
-## Common Commands
-
-Install or update PortUI in a repo:
-
-```bash
-sh ./portui.sh --install-project ../smaLLMs
-```
-
-Run the vendored PortUI inside that repo:
-
-```bash
-(cd ../smaLLMs && sh ./portui.sh --run doctor)
-```
-
-Manifest-direct mode still exists for debugging:
-
-```bash
-sh ./portui.sh --manifest-dir ./examples/demo --list
-sh ./portui.sh --manifest-dir ./examples/demo --run git-version
-```
-
-Workspace mode also still exists as a secondary convenience feature:
+Workspace mode still exists, but it is secondary:
 
 - `--workspace`
 - `--project`
@@ -136,72 +178,27 @@ VARIABLE_repo={{projectDir}}
 ```text
 ID=doctor
 TITLE=Doctor
-DESCRIPTION=Print workspace-aware project info.
+DESCRIPTION=Print the current project, workspace, and OS values.
 TIMEOUT_SECONDS=20
 CWD={{projectDir}}
 POSIX_PROGRAM=sh
-POSIX_ARGS=-c|printf '%s\n' 'project={{projectId}}' 'workspace={{workspaceDir}}'
+POSIX_ARGS=-c|printf '%s\n' 'project={{projectId}}' 'workspace={{workspaceDir}}' 'os={{os}}'
 WINDOWS_PROGRAM=powershell
-WINDOWS_ARGS=-NoProfile|-Command|Write-Output 'project={{projectId}}'; Write-Output 'workspace={{workspaceDir}}'
+WINDOWS_ARGS=-NoProfile|-Command|Write-Output 'project={{projectId}}'; Write-Output 'workspace={{workspaceDir}}'; Write-Output 'os={{os}}'
 ```
 
 See [docs/manifest-spec.md](./docs/manifest-spec.md) for the full format.
 
-## Built-In Variables
-
-- `{{home}}`
-- `{{cwd}}`
-- `{{os}}`
-- `{{manifestDir}}`
-- `{{projectDir}}`
-- `{{projectId}}`
-- `{{workspaceDir}}`
-- `{{pathSep}}`
-- `{{listSep}}`
-- `{{exeSuffix}}`
-
-Manifest-defined variables can reference built-ins and each other.
-
-## Why This Shape
-
-PortUI is meant to reduce duplicated per-repo terminal glue.
-
-Instead of each repo growing its own shell scripts, batch files, and one-off TUIs, PortUI standardizes:
-
-- the TUI surface
-- process launching
-- cross-platform command resolution
-- preview, confirmation, logs, and timeouts
-
-That keeps repo-specific code focused on actual project logic while PortUI owns the portable terminal layer.
-
-## Repository Layout
-
-```text
-.
-├── portui.sh
-├── portui.ps1
-├── portui.cmd
-├── docs/
-├── ci/
-└── examples/
-```
-
-The workspace examples live in:
-
-- [examples/workspace/alpha](./examples/workspace/alpha)
-- [examples/workspace/beta](./examples/workspace/beta)
-
 ## Verification
 
-The repository includes smoke tests for supported flows:
+The repository includes smoke tests for:
 
+- starter-app default behavior
 - project-local runtime install
 - project-local wrapper execution
+- project initialization
 - single-manifest mode
-- workspace project discovery
-- per-project action dispatch on POSIX
-- PowerShell workspace behavior in CI
+- workspace discovery and dispatch
 
 Files:
 
@@ -221,10 +218,6 @@ Windows:
 ```powershell
 .\ci\test-powershell.ps1
 ```
-
-## Project Status
-
-PortUI is evolving from a manifest runner into a reusable project-local terminal engine. The current implementation is still intentionally small and explicit, but it now supports vendoring the runtime into repos and running them through project-local PortUI entrypoints.
 
 ## Open Source
 

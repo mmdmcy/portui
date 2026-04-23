@@ -6,6 +6,8 @@ The format is intentionally lightweight and follows semantic versioning in pract
 
 ## [Unreleased]
 
+- added a built-in starter app in `.portui/` so a plain `git clone portui <folder>` is immediately usable
+- added `--init-project` and `-InitProject` to create a starter PortUI app plus vendored runtime inside an existing repo
 - added `--install-project` and `-InstallProject` to vendor the PortUI runtime into existing repos
 - added project-local wrapper generation for `portui.sh`, `portui.ps1`, and `portui.cmd`
 - expanded smoke tests to cover project-local install and project-local execution
