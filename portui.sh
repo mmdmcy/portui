@@ -3,21 +3,41 @@
 set -u
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-MANIFEST_DIR="$SCRIPT_DIR/examples/demo"
+DEFAULT_MANIFEST_DIR="$SCRIPT_DIR/examples/demo"
+DEFAULT_WORKSPACE_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+MANIFEST_DIR=""
+WORKSPACE_DIR=""
+MODE="auto"
 LIST_ONLY=0
+LIST_PROJECTS=0
 RUN_ACTION_ID=""
+PROJECT_ID=""
+INSTALL_PROJECT_DIR=""
 
 PORTUI_OS=""
 PORTUI_VAR_KEYS=""
 PORTUI_ACTION_LIST_FILE=""
+PORTUI_PROJECT_LIST_FILE=""
+
+PORTUI_MANIFEST_NAME=""
+PORTUI_MANIFEST_DESCRIPTION=""
+CURRENT_PROJECT_DIR=""
+CURRENT_PROJECT_ID=""
+CURRENT_WORKSPACE_DIR=""
 
 usage() {
     cat <<'EOF'
-Usage: sh ./portui.sh [--manifest-dir DIR] [--list] [--run ACTION_ID]
+Usage: sh ./portui.sh [--manifest-dir DIR | --workspace DIR] [--project PROJECT_ID] [--list-projects] [--list] [--run ACTION_ID]
 
 Options:
-  --manifest-dir DIR   Path to a PortUI manifest directory.
-  --list               Print actions and exit.
+  --manifest-dir DIR   Path to one PortUI manifest directory.
+  --workspace DIR      Path to a workspace containing project manifests in repo/portui or repo/.portui.
+  --project ID         Project id inside workspace mode.
+  --install-project DIR
+                      Install or update project-local PortUI runtime files in a repo that already has portui/ or .portui.
+  --list-projects      Print discovered workspace projects and exit.
+  --list               Print actions for the selected manifest or project and exit.
   --run ACTION_ID      Run a specific action non-interactively.
   --help               Show this help.
 EOF
@@ -110,14 +130,172 @@ detect_os() {
     esac
 }
 
+resolve_dir() {
+    target=$1
+    if [ ! -d "$target" ]; then
+        printf '%s\n' "Missing directory: $target" >&2
+        exit 1
+    fi
+    CDPATH= cd -- "$target" && pwd
+}
+
+copy_runtime_file() {
+    source_path=$1
+    target_path=$2
+    cp "$source_path" "$target_path" || exit 1
+}
+
+write_project_shim_sh() {
+    target_path=$1
+    manifest_leaf=$2
+
+    cat > "$target_path" <<EOF
+#!/bin/sh
+
+set -eu
+
+SCRIPT_DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+exec sh "\$SCRIPT_DIR/.portui-runtime/portui.sh" --manifest-dir "\$SCRIPT_DIR/$manifest_leaf" "\$@"
+EOF
+    chmod +x "$target_path" || exit 1
+}
+
+write_project_shim_ps1() {
+    target_path=$1
+    manifest_leaf=$2
+
+    cat > "$target_path" <<EOF
+\$scriptDir = Split-Path -Parent \$MyInvocation.MyCommand.Path
+& (Join-Path \$scriptDir '.portui-runtime\portui.ps1') -ManifestDir (Join-Path \$scriptDir '$manifest_leaf') @args
+exit \$LASTEXITCODE
+EOF
+}
+
+write_project_shim_cmd() {
+    target_path=$1
+    manifest_leaf=$2
+
+    cat > "$target_path" <<EOF
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0\.portui-runtime\portui.ps1" -ManifestDir "%~dp0$manifest_leaf" %*
+EOF
+}
+
+detect_project_manifest_dir_in_repo() {
+    project_dir=$1
+    if [ -f "$project_dir/portui/manifest.env" ]; then
+        printf '%s\n' "$project_dir/portui"
+        return 0
+    fi
+    if [ -f "$project_dir/.portui/manifest.env" ]; then
+        printf '%s\n' "$project_dir/.portui"
+        return 0
+    fi
+
+    printf '%s\n' "Project does not contain portui/manifest.env or .portui/manifest.env: $project_dir" >&2
+    exit 1
+}
+
+install_project_runtime() {
+    project_dir=$(resolve_dir "$1")
+    manifest_dir=$(detect_project_manifest_dir_in_repo "$project_dir")
+    manifest_leaf=$(basename "$manifest_dir")
+    runtime_dir="$project_dir/.portui-runtime"
+
+    mkdir -p "$runtime_dir" || exit 1
+
+    copy_runtime_file "$SCRIPT_DIR/portui.sh" "$runtime_dir/portui.sh"
+    copy_runtime_file "$SCRIPT_DIR/portui.ps1" "$runtime_dir/portui.ps1"
+    copy_runtime_file "$SCRIPT_DIR/portui.cmd" "$runtime_dir/portui.cmd"
+    if [ -f "$SCRIPT_DIR/VERSION" ]; then
+        copy_runtime_file "$SCRIPT_DIR/VERSION" "$runtime_dir/VERSION"
+    fi
+    chmod +x "$runtime_dir/portui.sh" || exit 1
+
+    write_project_shim_sh "$project_dir/portui.sh" "$manifest_leaf"
+    write_project_shim_ps1 "$project_dir/portui.ps1" "$manifest_leaf"
+    write_project_shim_cmd "$project_dir/portui.cmd" "$manifest_leaf"
+
+    printf '%s\n' "Installed PortUI runtime into $project_dir"
+    printf '%s\n' "Manifest: $manifest_dir"
+    printf '%s\n' "Run from the project root with ./portui.sh, .\\portui.ps1, or portui.cmd"
+}
+
+project_dir_from_manifest_dir() {
+    manifest_dir=$1
+    manifest_base=$(basename "$manifest_dir")
+    case "$manifest_base" in
+        portui|.portui)
+            dirname "$manifest_dir"
+            ;;
+        *)
+            printf '%s\n' "$manifest_dir"
+            ;;
+    esac
+}
+
+project_id_from_manifest_dir() {
+    project_dir=$(project_dir_from_manifest_dir "$1")
+    basename "$project_dir"
+}
+
+read_manifest_summary() {
+    manifest_dir=$1
+    manifest_file="$manifest_dir/manifest.env"
+    SUMMARY_NAME=$(project_id_from_manifest_dir "$manifest_dir")
+    SUMMARY_DESCRIPTION=""
+
+    if [ ! -f "$manifest_file" ]; then
+        return
+    fi
+
+    while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+        line=$(printf "%s" "$raw_line" | tr -d '\r')
+        case "$line" in
+            ''|'#'*)
+                continue
+                ;;
+        esac
+
+        key=${line%%=*}
+        value=${line#*=}
+        case "$key" in
+            NAME)
+                SUMMARY_NAME=$value
+                ;;
+            DESCRIPTION)
+                SUMMARY_DESCRIPTION=$value
+                ;;
+        esac
+    done < "$manifest_file"
+}
+
+reset_variable_state() {
+    PORTUI_VAR_KEYS=""
+}
+
 init_builtin_variables() {
     home_dir=${HOME-}
     current_dir=$(pwd)
+    current_project_dir=$(project_dir_from_manifest_dir "$MANIFEST_DIR")
+    current_project_id=$(project_id_from_manifest_dir "$MANIFEST_DIR")
+
+    if [ -n "$CURRENT_WORKSPACE_DIR" ]; then
+        workspace_dir_value=$CURRENT_WORKSPACE_DIR
+    else
+        workspace_dir_value=$(dirname "$current_project_dir")
+    fi
+
+    CURRENT_PROJECT_DIR=$current_project_dir
+    CURRENT_PROJECT_ID=$current_project_id
 
     set_named_var "home" "$home_dir" || exit 1
     set_named_var "cwd" "$current_dir" || exit 1
     set_named_var "os" "$PORTUI_OS" || exit 1
     set_named_var "manifestDir" "$MANIFEST_DIR" || exit 1
+    set_named_var "projectDir" "$current_project_dir" || exit 1
+    set_named_var "projectId" "$current_project_id" || exit 1
+    set_named_var "workspaceDir" "$workspace_dir_value" || exit 1
 
     if [ "$PORTUI_OS" = "windows" ]; then
         set_named_var "pathSep" "\\" || exit 1
@@ -161,7 +339,7 @@ load_manifest() {
         exit 1
     fi
 
-    PORTUI_MANIFEST_NAME="PortUI"
+    PORTUI_MANIFEST_NAME=$CURRENT_PROJECT_ID
     PORTUI_MANIFEST_DESCRIPTION=""
 
     while IFS= read -r raw_line || [ -n "$raw_line" ]; do
@@ -183,13 +361,62 @@ build_action_list() {
         exit 1
     fi
 
+    if [ -n "${PORTUI_ACTION_LIST_FILE-}" ] && [ -f "$PORTUI_ACTION_LIST_FILE" ]; then
+        rm -f "$PORTUI_ACTION_LIST_FILE"
+    fi
+
     PORTUI_ACTION_LIST_FILE=$(mktemp)
     find "$actions_dir" -type f -name '*.env' | sort > "$PORTUI_ACTION_LIST_FILE"
+}
+
+build_project_list() {
+    if [ ! -d "$WORKSPACE_DIR" ]; then
+        printf '%s\n' "Missing workspace directory: $WORKSPACE_DIR" >&2
+        exit 1
+    fi
+
+    if [ -n "${PORTUI_PROJECT_LIST_FILE-}" ] && [ -f "$PORTUI_PROJECT_LIST_FILE" ]; then
+        rm -f "$PORTUI_PROJECT_LIST_FILE"
+    fi
+
+    PORTUI_PROJECT_LIST_FILE=$(mktemp)
+
+    for candidate in "$WORKSPACE_DIR"/* "$WORKSPACE_DIR"/.[!.]* "$WORKSPACE_DIR"/..?*; do
+        [ -d "$candidate" ] || continue
+
+        for manifest_candidate in "$candidate/portui" "$candidate/.portui"; do
+            manifest_file="$manifest_candidate/manifest.env"
+            if [ -f "$manifest_file" ]; then
+                resolved_manifest_dir=$(resolve_dir "$manifest_candidate")
+                printf '%s\n' "$resolved_manifest_dir" >> "$PORTUI_PROJECT_LIST_FILE"
+            fi
+        done
+    done
+
+    sort -u "$PORTUI_PROJECT_LIST_FILE" -o "$PORTUI_PROJECT_LIST_FILE"
+}
+
+project_count() {
+    count=0
+    if [ -z "${PORTUI_PROJECT_LIST_FILE-}" ] || [ ! -f "$PORTUI_PROJECT_LIST_FILE" ]; then
+        printf '%s' "0"
+        return
+    fi
+
+    while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
+        [ -n "$manifest_dir" ] || continue
+        count=$((count + 1))
+    done < "$PORTUI_PROJECT_LIST_FILE"
+
+    printf '%s' "$count"
 }
 
 cleanup() {
     if [ -n "${PORTUI_ACTION_LIST_FILE-}" ] && [ -f "$PORTUI_ACTION_LIST_FILE" ]; then
         rm -f "$PORTUI_ACTION_LIST_FILE"
+    fi
+    if [ -n "${PORTUI_PROJECT_LIST_FILE-}" ] && [ -f "$PORTUI_PROJECT_LIST_FILE" ]; then
+        rm -f "$PORTUI_PROJECT_LIST_FILE"
     fi
 }
 
@@ -489,11 +716,27 @@ run_resolved_action() {
     return "$exit_code"
 }
 
+load_manifest_context() {
+    manifest_dir=$1
+    workspace_dir=$2
+
+    MANIFEST_DIR=$(resolve_dir "$manifest_dir")
+    CURRENT_WORKSPACE_DIR=$workspace_dir
+    reset_variable_state
+    init_builtin_variables
+    load_manifest
+    build_action_list
+}
+
 list_actions() {
     count=0
     printf '%s\n' "$PORTUI_MANIFEST_NAME"
     if [ -n "$PORTUI_MANIFEST_DESCRIPTION" ]; then
         printf '%s\n' "$PORTUI_MANIFEST_DESCRIPTION"
+    fi
+    printf '%s\n' "Project: $CURRENT_PROJECT_ID"
+    if [ -n "$CURRENT_WORKSPACE_DIR" ]; then
+        printf '%s\n' "Workspace: $CURRENT_WORKSPACE_DIR"
     fi
     printf '\n'
 
@@ -506,6 +749,43 @@ list_actions() {
             printf '    %s\n' "$ACTION_DESCRIPTION"
         fi
     done < "$PORTUI_ACTION_LIST_FILE"
+}
+
+list_projects() {
+    count=0
+    printf '%s\n' "PortUI Workspace"
+    printf '%s\n' "$WORKSPACE_DIR"
+    printf '\n'
+
+    while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
+        [ -n "$manifest_dir" ] || continue
+        count=$((count + 1))
+        project_id=$(project_id_from_manifest_dir "$manifest_dir")
+        read_manifest_summary "$manifest_dir"
+        printf '%2d. %s [%s]\n' "$count" "$SUMMARY_NAME" "$project_id"
+        if [ -n "$SUMMARY_DESCRIPTION" ]; then
+            printf '    %s\n' "$SUMMARY_DESCRIPTION"
+        fi
+    done < "$PORTUI_PROJECT_LIST_FILE"
+
+    if [ "$count" -eq 0 ]; then
+        printf '%s\n' "No PortUI projects found."
+        exit 1
+    fi
+}
+
+find_project_manifest_dir() {
+    target_id=$1
+
+    while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
+        [ -n "$manifest_dir" ] || continue
+        if [ "$(project_id_from_manifest_dir "$manifest_dir")" = "$target_id" ]; then
+            printf '%s\n' "$manifest_dir"
+            return 0
+        fi
+    done < "$PORTUI_PROJECT_LIST_FILE"
+
+    return 1
 }
 
 run_action_by_id() {
@@ -533,6 +813,7 @@ run_action_by_id() {
     if [ -n "$ACTION_DESCRIPTION" ]; then
         printf '%s\n' "$ACTION_DESCRIPTION"
     fi
+    printf '%s\n' "Project: $CURRENT_PROJECT_ID"
     printf '%s\n' "Working directory: $RESOLVED_CWD"
     printf '%s\n' "Resolution: $RESOLUTION_SOURCE"
     printf '%s' "Command: "
@@ -553,14 +834,20 @@ run_action_by_id() {
     run_resolved_action
 }
 
-interactive_menu() {
+interactive_action_menu() {
+    allow_back=$1
+
     while :; do
         printf '\n%s\n' "$PORTUI_MANIFEST_NAME"
         if [ -n "$PORTUI_MANIFEST_DESCRIPTION" ]; then
             printf '%s\n' "$PORTUI_MANIFEST_DESCRIPTION"
         fi
-        printf '%s\n' "OS: $PORTUI_OS"
-        printf '%s\n\n' "Manifest: $MANIFEST_DIR"
+        printf '%s\n' "Project: $CURRENT_PROJECT_ID"
+        printf '%s\n' "Project directory: $CURRENT_PROJECT_DIR"
+        if [ -n "$CURRENT_WORKSPACE_DIR" ]; then
+            printf '%s\n' "Workspace: $CURRENT_WORKSPACE_DIR"
+        fi
+        printf '%s\n\n' "OS: $PORTUI_OS"
 
         count=0
         while IFS= read -r action_file || [ -n "$action_file" ]; do
@@ -578,12 +865,21 @@ interactive_menu() {
             exit 1
         fi
 
-        printf '\n%s' "Select an action number, or q to quit: "
+        if [ "$allow_back" -eq 1 ]; then
+            printf '\n%s' "Select an action number, b to go back, or q to quit: "
+        else
+            printf '\n%s' "Select an action number, or q to quit: "
+        fi
         IFS= read -r selection
 
         case "$selection" in
             q|Q|quit|exit)
                 exit 0
+                ;;
+            b|B|back)
+                if [ "$allow_back" -eq 1 ]; then
+                    return 0
+                fi
                 ;;
         esac
 
@@ -622,6 +918,7 @@ interactive_menu() {
         if [ -n "$ACTION_DESCRIPTION" ]; then
             printf '%s\n' "$ACTION_DESCRIPTION"
         fi
+        printf '%s\n' "Project: $CURRENT_PROJECT_ID"
         printf '%s\n' "Working directory: $RESOLVED_CWD"
         printf '%s\n' "Resolution: $RESOLUTION_SOURCE"
         printf '%s' "Command: "
@@ -653,6 +950,105 @@ interactive_menu() {
     done
 }
 
+interactive_workspace_menu() {
+    while :; do
+        printf '\n%s\n' "PortUI Workspace"
+        printf '%s\n' "$WORKSPACE_DIR"
+        printf '%s\n\n' "OS: $PORTUI_OS"
+
+        count=0
+        while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
+            [ -n "$manifest_dir" ] || continue
+            count=$((count + 1))
+            project_id=$(project_id_from_manifest_dir "$manifest_dir")
+            read_manifest_summary "$manifest_dir"
+            printf '%2d. %s [%s]\n' "$count" "$SUMMARY_NAME" "$project_id"
+            if [ -n "$SUMMARY_DESCRIPTION" ]; then
+                printf '    %s\n' "$SUMMARY_DESCRIPTION"
+            fi
+        done < "$PORTUI_PROJECT_LIST_FILE"
+
+        if [ "$count" -eq 0 ]; then
+            printf '%s\n' "No PortUI projects found."
+            exit 1
+        fi
+
+        printf '\n%s' "Select a project number, or q to quit: "
+        IFS= read -r selection
+
+        case "$selection" in
+            q|Q|quit|exit)
+                exit 0
+                ;;
+        esac
+
+        case "$selection" in
+            ''|*[!0-9]*)
+                printf '%s\n' "Invalid selection."
+                continue
+                ;;
+        esac
+
+        if [ "$selection" -lt 1 ] || [ "$selection" -gt "$count" ]; then
+            printf '%s\n' "Selection out of range."
+            continue
+        fi
+
+        current_index=0
+        selected_manifest=""
+        while IFS= read -r manifest_dir || [ -n "$manifest_dir" ]; do
+            [ -n "$manifest_dir" ] || continue
+            current_index=$((current_index + 1))
+            if [ "$current_index" -eq "$selection" ]; then
+                selected_manifest=$manifest_dir
+                break
+            fi
+        done < "$PORTUI_PROJECT_LIST_FILE"
+
+        if [ -z "$selected_manifest" ]; then
+            printf '%s\n' "Unable to resolve selection."
+            continue
+        fi
+
+        load_manifest_context "$selected_manifest" "$WORKSPACE_DIR"
+        interactive_action_menu 1
+    done
+}
+
+select_mode() {
+    detect_os
+
+    if [ -n "$MANIFEST_DIR" ]; then
+        MANIFEST_DIR=$(resolve_dir "$MANIFEST_DIR")
+        MODE="manifest"
+        return
+    fi
+
+    if [ -n "$WORKSPACE_DIR" ]; then
+        WORKSPACE_DIR=$(resolve_dir "$WORKSPACE_DIR")
+        build_project_list
+        MODE="workspace"
+        return
+    fi
+
+    WORKSPACE_DIR=$(resolve_dir "$DEFAULT_WORKSPACE_DIR")
+    build_project_list
+    discovered_projects=$(project_count)
+
+    if [ "$discovered_projects" -gt 0 ]; then
+        MODE="workspace"
+        return
+    fi
+
+    if [ -n "$PROJECT_ID" ] || [ "$LIST_PROJECTS" -eq 1 ]; then
+        printf '%s\n' "No PortUI workspace projects were discovered under $WORKSPACE_DIR" >&2
+        exit 1
+    fi
+
+    MANIFEST_DIR=$(resolve_dir "$DEFAULT_MANIFEST_DIR")
+    MODE="manifest"
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --manifest-dir)
@@ -662,6 +1058,33 @@ while [ "$#" -gt 0 ]; do
                 exit 1
             fi
             MANIFEST_DIR=$1
+            ;;
+        --workspace)
+            shift
+            if [ "$#" -eq 0 ]; then
+                printf '%s\n' "--workspace requires a value" >&2
+                exit 1
+            fi
+            WORKSPACE_DIR=$1
+            ;;
+        --project)
+            shift
+            if [ "$#" -eq 0 ]; then
+                printf '%s\n' "--project requires a value" >&2
+                exit 1
+            fi
+            PROJECT_ID=$1
+            ;;
+        --install-project)
+            shift
+            if [ "$#" -eq 0 ]; then
+                printf '%s\n' "--install-project requires a value" >&2
+                exit 1
+            fi
+            INSTALL_PROJECT_DIR=$1
+            ;;
+        --list-projects)
+            LIST_PROJECTS=1
             ;;
         --list)
             LIST_ONLY=1
@@ -687,24 +1110,82 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-detect_os
-if [ ! -d "$MANIFEST_DIR" ]; then
-    printf '%s\n' "Missing manifest directory: $MANIFEST_DIR" >&2
-    exit 1
-fi
-MANIFEST_DIR=$(CDPATH= cd -- "$MANIFEST_DIR" && pwd)
-init_builtin_variables
-load_manifest
-build_action_list
+if [ -n "$INSTALL_PROJECT_DIR" ]; then
+    if [ -n "$MANIFEST_DIR" ] || [ -n "$WORKSPACE_DIR" ] || [ -n "$PROJECT_ID" ] || [ "$LIST_PROJECTS" -eq 1 ] || [ "$LIST_ONLY" -eq 1 ] || [ -n "$RUN_ACTION_ID" ]; then
+        printf '%s\n' "--install-project cannot be combined with runtime selection or action flags" >&2
+        exit 1
+    fi
 
-if [ "$LIST_ONLY" -eq 1 ]; then
-    list_actions
+    install_project_runtime "$INSTALL_PROJECT_DIR"
     exit 0
 fi
 
-if [ -n "$RUN_ACTION_ID" ]; then
-    run_action_by_id "$RUN_ACTION_ID"
-    exit $?
+if [ -n "$MANIFEST_DIR" ] && { [ -n "$WORKSPACE_DIR" ] || [ -n "$PROJECT_ID" ] || [ "$LIST_PROJECTS" -eq 1 ]; }; then
+    printf '%s\n' "--manifest-dir cannot be combined with workspace options" >&2
+    exit 1
 fi
 
-interactive_menu
+select_mode
+
+if [ "$MODE" = "manifest" ]; then
+    if [ "$LIST_PROJECTS" -eq 1 ] || [ -n "$PROJECT_ID" ]; then
+        printf '%s\n' "Project selection is only available in workspace mode" >&2
+        exit 1
+    fi
+
+    CURRENT_WORKSPACE_DIR=""
+    load_manifest_context "$MANIFEST_DIR" "$CURRENT_WORKSPACE_DIR"
+
+    if [ "$LIST_ONLY" -eq 1 ]; then
+        list_actions
+        exit 0
+    fi
+
+    if [ -n "$RUN_ACTION_ID" ]; then
+        run_action_by_id "$RUN_ACTION_ID"
+        exit $?
+    fi
+
+    interactive_action_menu 0
+    exit 0
+fi
+
+workspace_projects=$(project_count)
+if [ "$workspace_projects" -eq 0 ]; then
+    printf '%s\n' "No PortUI projects found in workspace: $WORKSPACE_DIR" >&2
+    exit 1
+fi
+
+if [ "$LIST_PROJECTS" -eq 1 ]; then
+    list_projects
+    exit 0
+fi
+
+if [ -n "$PROJECT_ID" ]; then
+    selected_manifest=$(find_project_manifest_dir "$PROJECT_ID") || {
+        printf '%s\n' "No project with id: $PROJECT_ID" >&2
+        exit 1
+    }
+
+    load_manifest_context "$selected_manifest" "$WORKSPACE_DIR"
+
+    if [ "$LIST_ONLY" -eq 1 ]; then
+        list_actions
+        exit 0
+    fi
+
+    if [ -n "$RUN_ACTION_ID" ]; then
+        run_action_by_id "$RUN_ACTION_ID"
+        exit $?
+    fi
+
+    interactive_action_menu 1
+    exit 0
+fi
+
+if [ "$LIST_ONLY" -eq 1 ] || [ -n "$RUN_ACTION_ID" ]; then
+    printf '%s\n' "Workspace mode requires --project when using --list or --run" >&2
+    exit 1
+fi
+
+interactive_workspace_menu

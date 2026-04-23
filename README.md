@@ -1,130 +1,151 @@
 # PortUI
 
-PortUI is a zero-dependency, manifest-driven command runner for cross-platform terminal workflows.
+PortUI is a zero-dependency cross-platform terminal engine for project-local TUIs.
 
-It gives you one declarative place to define developer actions, variables, working directories, and per-OS command overrides, then resolves those actions into native commands on:
+The intended model is:
 
-- Linux with `sh`
-- macOS with `sh`
-- Windows with built-in `PowerShell`
+- define one `portui/` app inside a repo
+- install the PortUI runtime into that repo
+- run PortUI from that repo as the repo's main TUI on macOS, Linux, and Windows
 
-PortUI is not a terminal emulator and not a package manager. It is a small runtime for portable command surfaces.
+That lets you reuse one standardized portable TUI base instead of rebuilding shell scripts, batch files, and terminal UI glue for every project.
 
-## Why PortUI
+## What PortUI Does
 
-Cross-platform developer tooling usually breaks down in one of two ways:
+PortUI gives you one declarative place to define:
 
-- every repo grows a pile of shell-specific wrapper scripts
-- a simple command runner turns into a full application stack with its own dependencies
+- project actions
+- working directories
+- environment overrides
+- per-OS command differences
+- shared built-in variables like project and workspace paths
 
-PortUI is aimed at the gap between those two extremes:
+It is not a package manager and not a terminal emulator. It is a portable project-local TUI base with a manifest-driven runtime.
 
-- no third-party runtime dependencies
-- no JSON or YAML parser dependency
-- no language-specific bootstrap requirement
-- one logical action can still map to different native commands on each OS
+## Project-Local Model
 
-## What It Is
-
-PortUI is best described as a small framework or runtime for manifest-driven terminal commands.
-
-Each PortUI app is just:
+Put a PortUI app inside a project using either:
 
 ```text
-my-portui-app/
-  manifest.env
-  actions/
-    01-doctor.env
-    02-build.env
-    03-dev.env
+repo-name/
+  portui/
+    manifest.env
+    actions/
 ```
 
-The runtime is provided by:
+or:
 
-- [portui.sh](./portui.sh)
-- [portui.ps1](./portui.ps1)
-- [portui.cmd](./portui.cmd)
+```text
+repo-name/
+  .portui/
+    manifest.env
+    actions/
+```
 
-The demo app lives in:
-
-- [examples/demo](./examples/demo)
+Then install the runtime into that project from the central `portui` repo.
 
 ## Quick Start
+
+Install PortUI into a project that already has `portui/manifest.env` or `.portui/manifest.env`.
 
 Linux or macOS:
 
 ```bash
-sh ./portui.sh
+sh ./portui.sh --install-project ../GUITboard
 ```
 
-Windows:
+Windows PowerShell:
 
 ```powershell
-.\portui.ps1
+.\portui.ps1 -InstallProject ..\GUITboard
 ```
 
-Or:
+That creates project-local runtime files in the target repo:
 
-```cmd
-portui.cmd
+```text
+repo-name/
+  .portui-runtime/
+  portui.sh
+  portui.ps1
+  portui.cmd
+  portui/
 ```
 
-The default manifest directory is `./examples/demo`.
-
-## Non-Interactive Usage
+After that, run PortUI from inside the target project.
 
 Linux or macOS:
 
 ```bash
 sh ./portui.sh --list
-sh ./portui.sh --run git-version
-sh ./portui.sh --manifest-dir ./examples/demo --run list-workspace
+sh ./portui.sh --run test
 ```
 
-Windows:
+Windows PowerShell:
 
 ```powershell
 .\portui.ps1 -List
-.\portui.ps1 -Run git-version
-.\portui.ps1 -ManifestDir .\examples\demo -Run list-workspace
+.\portui.ps1 -Run test
 ```
+
+Windows Command Prompt:
+
+```cmd
+portui.cmd --list
+portui.cmd --run test
+```
+
+## Common Commands
+
+Install or update PortUI in a repo:
+
+```bash
+sh ./portui.sh --install-project ../smaLLMs
+```
+
+Run the vendored PortUI inside that repo:
+
+```bash
+(cd ../smaLLMs && sh ./portui.sh --run doctor)
+```
+
+Manifest-direct mode still exists for debugging:
+
+```bash
+sh ./portui.sh --manifest-dir ./examples/demo --list
+sh ./portui.sh --manifest-dir ./examples/demo --run git-version
+```
+
+Workspace mode also still exists as a secondary convenience feature:
+
+- `--workspace`
+- `--project`
+- `--list-projects`
 
 ## Manifest Example
 
 `manifest.env`:
 
 ```text
-NAME=My Repo Tools
-DESCRIPTION=Portable local commands for one repository.
-VARIABLE_workspace={{home}}/Documents/github
-VARIABLE_repo={{workspace}}/my-repo
+NAME=My Project
+DESCRIPTION=Portable actions for one project.
+VARIABLE_repo={{projectDir}}
 ```
 
-`actions/01-list-workspace.env`:
+`actions/01-doctor.env`:
 
 ```text
-ID=list-workspace
-TITLE=List Workspace
-DESCRIPTION=Demonstrate per-platform command translation.
+ID=doctor
+TITLE=Doctor
+DESCRIPTION=Print workspace-aware project info.
 TIMEOUT_SECONDS=20
-CWD={{workspace}}
-POSIX_PROGRAM=ls
-POSIX_ARGS=-la|.
+CWD={{projectDir}}
+POSIX_PROGRAM=sh
+POSIX_ARGS=-c|printf '%s\n' 'project={{projectId}}' 'workspace={{workspaceDir}}'
 WINDOWS_PROGRAM=powershell
-WINDOWS_ARGS=-NoProfile|-Command|Get-ChildItem -Force .
+WINDOWS_ARGS=-NoProfile|-Command|Write-Output 'project={{projectId}}'; Write-Output 'workspace={{workspaceDir}}'
 ```
 
 See [docs/manifest-spec.md](./docs/manifest-spec.md) for the full format.
-
-## Resolution Model
-
-PortUI resolves actions in a simple order:
-
-1. base keys
-2. `POSIX_*` overrides on Linux and macOS
-3. OS-specific overrides for the current host
-
-That lets you share the common shape of an action while only overriding the parts that are truly platform-specific.
 
 ## Built-In Variables
 
@@ -132,11 +153,27 @@ That lets you share the common shape of an action while only overriding the part
 - `{{cwd}}`
 - `{{os}}`
 - `{{manifestDir}}`
+- `{{projectDir}}`
+- `{{projectId}}`
+- `{{workspaceDir}}`
 - `{{pathSep}}`
 - `{{listSep}}`
 - `{{exeSuffix}}`
 
-Manifest variables can reference built-ins and each other.
+Manifest-defined variables can reference built-ins and each other.
+
+## Why This Shape
+
+PortUI is meant to reduce duplicated per-repo terminal glue.
+
+Instead of each repo growing its own shell scripts, batch files, and one-off TUIs, PortUI standardizes:
+
+- the TUI surface
+- process launching
+- cross-platform command resolution
+- preview, confirmation, logs, and timeouts
+
+That keeps repo-specific code focused on actual project logic while PortUI owns the portable terminal layer.
 
 ## Repository Layout
 
@@ -150,9 +187,23 @@ Manifest variables can reference built-ins and each other.
 └── examples/
 ```
 
+The workspace examples live in:
+
+- [examples/workspace/alpha](./examples/workspace/alpha)
+- [examples/workspace/beta](./examples/workspace/beta)
+
 ## Verification
 
-The repository includes smoke tests for all supported platforms:
+The repository includes smoke tests for supported flows:
+
+- project-local runtime install
+- project-local wrapper execution
+- single-manifest mode
+- workspace project discovery
+- per-project action dispatch on POSIX
+- PowerShell workspace behavior in CI
+
+Files:
 
 - [ci/test-posix.sh](./ci/test-posix.sh)
 - [ci/test-powershell.ps1](./ci/test-powershell.ps1)
@@ -173,11 +224,7 @@ Windows:
 
 ## Project Status
 
-PortUI `0.1.0` is the first public release. The current scope is intentionally narrow:
-
-- stable enough for local developer workflows
-- small enough to audit quickly
-- opinionated toward explicit commands over shell magic
+PortUI is evolving from a manifest runner into a reusable project-local terminal engine. The current implementation is still intentionally small and explicit, but it now supports vendoring the runtime into repos and running them through project-local PortUI entrypoints.
 
 ## Open Source
 

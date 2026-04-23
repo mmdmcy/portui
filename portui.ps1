@@ -1,13 +1,42 @@
 param(
-    [string]$ManifestDir = (Join-Path $PSScriptRoot 'examples/demo'),
+    [string]$ManifestDir,
+    [string]$WorkspaceDir,
+    [string]$Project,
+    [string]$InstallProject,
+    [switch]$ListProjects,
     [switch]$List,
-    [string]$Run
+    [string]$Run,
+    [switch]$Help
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:Variables = @{}
+$script:CurrentManifestDir = ''
+$script:CurrentWorkspaceDir = ''
+$script:CurrentProjectDir = ''
+$script:CurrentProjectId = ''
+$script:CurrentManifestName = 'PortUI'
+$script:CurrentManifestDescription = ''
+$script:CurrentActions = @()
+
+function Show-Usage {
+    @'
+Usage: .\portui.ps1 [-ManifestDir DIR | -WorkspaceDir DIR] [-Project ID] [-ListProjects] [-List] [-Run ACTION_ID]
+
+Options:
+  -ManifestDir DIR   Path to one PortUI manifest directory.
+  -WorkspaceDir DIR  Path to a workspace containing project manifests in repo\portui or repo\.portui.
+  -Project ID        Project id inside workspace mode.
+  -InstallProject DIR
+                    Install or update project-local PortUI runtime files in a repo that already has portui\ or .portui\.
+  -ListProjects      Print discovered workspace projects and exit.
+  -List              Print actions for the selected manifest or project and exit.
+  -Run ACTION_ID     Run a specific action non-interactively.
+  -Help              Show this help.
+'@
+}
 
 function Set-PortUIVariable {
     param(
@@ -93,19 +122,182 @@ function Get-HostOSName {
     return 'unknown'
 }
 
-function Initialize-Builtins {
+function Get-ResolvedDirectory {
+    param(
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw 'A directory path is required.'
+    }
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "Missing directory: $Path"
+    }
+
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
+function Get-ProjectManifestDirectoryInRepo {
+    param(
+        [string]$ResolvedProjectDir
+    )
+
+    $portuiDir = Join-Path $ResolvedProjectDir 'portui'
+    $hiddenDir = Join-Path $ResolvedProjectDir '.portui'
+    if (Test-Path -LiteralPath (Join-Path $portuiDir 'manifest.env')) {
+        return $portuiDir
+    }
+    if (Test-Path -LiteralPath (Join-Path $hiddenDir 'manifest.env')) {
+        return $hiddenDir
+    }
+
+    throw "Project does not contain portui\manifest.env or .portui\manifest.env: $ResolvedProjectDir"
+}
+
+function Write-TextFileNoBom {
+    param(
+        [string]$Path,
+        [string]$Content
+    )
+
+    $directory = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($directory)) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
+function Install-PortUIProject {
+    param(
+        [string]$ProjectDir
+    )
+
+    $resolvedProjectDir = Get-ResolvedDirectory -Path $ProjectDir
+    $manifestDir = Get-ProjectManifestDirectoryInRepo -ResolvedProjectDir $resolvedProjectDir
+    $manifestLeaf = Split-Path -Leaf $manifestDir
+    $runtimeDir = Join-Path $resolvedProjectDir '.portui-runtime'
+
+    New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
+
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portui.sh') -Destination (Join-Path $runtimeDir 'portui.sh') -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portui.ps1') -Destination (Join-Path $runtimeDir 'portui.ps1') -Force
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portui.cmd') -Destination (Join-Path $runtimeDir 'portui.cmd') -Force
+    if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'VERSION')) {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Destination (Join-Path $runtimeDir 'VERSION') -Force
+    }
+
+    $shimSh = @"
+#!/bin/sh
+
+set -eu
+
+SCRIPT_DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+exec sh "\$SCRIPT_DIR/.portui-runtime/portui.sh" --manifest-dir "\$SCRIPT_DIR/$manifestLeaf" "\$@"
+"@
+    $shimPs1 = @"
+\$scriptDir = Split-Path -Parent \$MyInvocation.MyCommand.Path
+& (Join-Path \$scriptDir '.portui-runtime\portui.ps1') -ManifestDir (Join-Path \$scriptDir '$manifestLeaf') @args
+exit \$LASTEXITCODE
+"@
+    $shimCmd = @"
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0\.portui-runtime\portui.ps1" -ManifestDir "%~dp0\$manifestLeaf" %*
+"@
+
+    Write-TextFileNoBom -Path (Join-Path $resolvedProjectDir 'portui.sh') -Content $shimSh
+    Write-TextFileNoBom -Path (Join-Path $resolvedProjectDir 'portui.ps1') -Content $shimPs1
+    Write-TextFileNoBom -Path (Join-Path $resolvedProjectDir 'portui.cmd') -Content $shimCmd
+
+    Write-Host "Installed PortUI runtime into $resolvedProjectDir"
+    Write-Host "Manifest: $manifestDir"
+    Write-Host 'Run from the project root with ./portui.sh, .\portui.ps1, or portui.cmd'
+}
+
+function Get-ProjectDirectoryFromManifestDir {
     param(
         [string]$ResolvedManifestDir
+    )
+
+    $leaf = Split-Path -Leaf $ResolvedManifestDir
+    if ($leaf -in @('portui', '.portui')) {
+        return Split-Path -Parent $ResolvedManifestDir
+    }
+
+    return $ResolvedManifestDir
+}
+
+function Get-ProjectIdFromManifestDir {
+    param(
+        [string]$ResolvedManifestDir
+    )
+
+    return Split-Path -Leaf (Get-ProjectDirectoryFromManifestDir -ResolvedManifestDir $ResolvedManifestDir)
+}
+
+function Get-ManifestSummary {
+    param(
+        [string]$ResolvedManifestDir
+    )
+
+    $summary = @{
+        ProjectId = Get-ProjectIdFromManifestDir -ResolvedManifestDir $ResolvedManifestDir
+        Name = Get-ProjectIdFromManifestDir -ResolvedManifestDir $ResolvedManifestDir
+        Description = ''
+        ManifestDir = $ResolvedManifestDir
+        ProjectDir = Get-ProjectDirectoryFromManifestDir -ResolvedManifestDir $ResolvedManifestDir
+    }
+
+    $manifestPath = Join-Path $ResolvedManifestDir 'manifest.env'
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        return $summary
+    }
+
+    $data = Get-KeyValueData -Path $manifestPath
+    if ($data.ContainsKey('NAME') -and -not [string]::IsNullOrWhiteSpace($data.NAME)) {
+        $summary.Name = $data.NAME
+    }
+    if ($data.ContainsKey('DESCRIPTION')) {
+        $summary.Description = $data.DESCRIPTION
+    }
+
+    return $summary
+}
+
+function Reset-PortUIVariables {
+    $script:Variables = @{}
+}
+
+function Initialize-Builtins {
+    param(
+        [string]$ResolvedManifestDir,
+        [string]$ResolvedWorkspaceDir
     )
 
     $homeDir = [Environment]::GetFolderPath('UserProfile')
     $cwd = (Get-Location).Path
     $osName = Get-HostOSName
+    $projectDir = Get-ProjectDirectoryFromManifestDir -ResolvedManifestDir $ResolvedManifestDir
+    $projectId = Get-ProjectIdFromManifestDir -ResolvedManifestDir $ResolvedManifestDir
+
+    if ([string]::IsNullOrWhiteSpace($ResolvedWorkspaceDir)) {
+        $ResolvedWorkspaceDir = Split-Path -Parent $projectDir
+    }
+
+    $script:CurrentManifestDir = $ResolvedManifestDir
+    $script:CurrentWorkspaceDir = $ResolvedWorkspaceDir
+    $script:CurrentProjectDir = $projectDir
+    $script:CurrentProjectId = $projectId
 
     Set-PortUIVariable -Name 'home' -Value $homeDir
     Set-PortUIVariable -Name 'cwd' -Value $cwd
     Set-PortUIVariable -Name 'os' -Value $osName
     Set-PortUIVariable -Name 'manifestDir' -Value $ResolvedManifestDir
+    Set-PortUIVariable -Name 'projectDir' -Value $projectDir
+    Set-PortUIVariable -Name 'projectId' -Value $projectId
+    Set-PortUIVariable -Name 'workspaceDir' -Value $ResolvedWorkspaceDir
 
     if ($osName -eq 'windows') {
         Set-PortUIVariable -Name 'pathSep' -Value '\'
@@ -126,7 +318,7 @@ function Load-Manifest {
     $manifestPath = Join-Path $ResolvedManifestDir 'manifest.env'
     $data = Get-KeyValueData -Path $manifestPath
     $manifest = @{
-        Name = 'PortUI'
+        Name = $script:CurrentProjectId
         Description = ''
     }
 
@@ -146,6 +338,8 @@ function Load-Manifest {
         Set-PortUIVariable -Name $key -Value (Expand-PortUIText $script:Variables[$key])
     }
 
+    $script:CurrentManifestName = $manifest.Name
+    $script:CurrentManifestDescription = $manifest.Description
     return $manifest
 }
 
@@ -235,6 +429,25 @@ function Get-ActionFiles {
     }
 
     return Get-ChildItem -LiteralPath $actionsDir -Filter '*.env' -File | Sort-Object Name
+}
+
+function Get-ProjectManifestDirs {
+    param(
+        [string]$ResolvedWorkspaceDir
+    )
+
+    $results = @()
+    foreach ($candidate in Get-ChildItem -LiteralPath $ResolvedWorkspaceDir -Directory -Force) {
+        foreach ($manifestName in @('portui', '.portui')) {
+            $manifestDir = Join-Path $candidate.FullName $manifestName
+            $manifestFile = Join-Path $manifestDir 'manifest.env'
+            if (Test-Path -LiteralPath $manifestFile) {
+                $results += (Resolve-Path -LiteralPath $manifestDir).Path
+            }
+        }
+    }
+
+    return @($results | Sort-Object -Unique)
 }
 
 function Merge-Variant {
@@ -445,6 +658,7 @@ function Show-ActionPreview {
     if ($Action.Description) {
         Write-Host $Action.Description
     }
+    Write-Host "Project: $($script:CurrentProjectId)"
     Write-Host "Working directory: $($Resolved.Cwd)"
     Write-Host "Resolution: $($Resolved.Source)"
     Write-Host "Command: $(Format-DisplayCommand -Resolved $Resolved)"
@@ -457,32 +671,83 @@ function Show-ActionPreview {
     }
 }
 
-$resolvedManifestDir = (Resolve-Path -LiteralPath $ManifestDir).Path
-Initialize-Builtins -ResolvedManifestDir $resolvedManifestDir
-$manifest = Load-Manifest -ResolvedManifestDir $resolvedManifestDir
-$actions = @(Get-ActionFiles -ResolvedManifestDir $resolvedManifestDir | ForEach-Object { Load-Action -Path $_.FullName })
+function Load-ManifestContext {
+    param(
+        [string]$ResolvedManifestDir,
+        [string]$ResolvedWorkspaceDir
+    )
 
-if ($List) {
-    Write-Host $manifest.Name
-    if ($manifest.Description) {
-        Write-Host $manifest.Description
+    Reset-PortUIVariables
+    Initialize-Builtins -ResolvedManifestDir $ResolvedManifestDir -ResolvedWorkspaceDir $ResolvedWorkspaceDir
+    $null = Load-Manifest -ResolvedManifestDir $ResolvedManifestDir
+    $script:CurrentActions = @(Get-ActionFiles -ResolvedManifestDir $ResolvedManifestDir | ForEach-Object { Load-Action -Path $_.FullName })
+}
+
+function Show-ProjectList {
+    param(
+        [string[]]$Projects
+    )
+
+    Write-Host 'PortUI Workspace'
+    Write-Host $WorkspaceDir
+    Write-Host ''
+
+    if ($Projects.Count -eq 0) {
+        throw "No PortUI projects found in workspace: $WorkspaceDir"
     }
-    Write-Host ""
-    $index = 1
-    foreach ($action in $actions) {
-        Write-Host ('{0,2}. {1} [{2}]' -f $index, $action.Title, $action.ID)
+
+    for ($i = 0; $i -lt $Projects.Count; $i++) {
+        $summary = Get-ManifestSummary -ResolvedManifestDir $Projects[$i]
+        Write-Host ('{0,2}. {1} [{2}]' -f ($i + 1), $summary.Name, $summary.ProjectId)
+        if ($summary.Description) {
+            Write-Host "    $($summary.Description)"
+        }
+    }
+}
+
+function Get-ProjectManifestDir {
+    param(
+        [string[]]$Projects,
+        [string]$TargetId
+    )
+
+    foreach ($manifestDir in $Projects) {
+        if ((Get-ProjectIdFromManifestDir -ResolvedManifestDir $manifestDir) -eq $TargetId) {
+            return $manifestDir
+        }
+    }
+
+    return $null
+}
+
+function Show-ActionList {
+    Write-Host $script:CurrentManifestName
+    if ($script:CurrentManifestDescription) {
+        Write-Host $script:CurrentManifestDescription
+    }
+    Write-Host "Project: $($script:CurrentProjectId)"
+    if ($script:CurrentWorkspaceDir) {
+        Write-Host "Workspace: $($script:CurrentWorkspaceDir)"
+    }
+    Write-Host ''
+
+    for ($i = 0; $i -lt $script:CurrentActions.Count; $i++) {
+        $action = $script:CurrentActions[$i]
+        Write-Host ('{0,2}. {1} [{2}]' -f ($i + 1), $action.Title, $action.ID)
         if ($action.Description) {
             Write-Host "    $($action.Description)"
         }
-        $index++
     }
-    exit 0
 }
 
-if ($Run) {
-    $action = $actions | Where-Object { $_.ID -eq $Run } | Select-Object -First 1
+function Invoke-ActionById {
+    param(
+        [string]$ActionId
+    )
+
+    $action = $script:CurrentActions | Where-Object { $_.ID -eq $ActionId } | Select-Object -First 1
     if (-not $action) {
-        throw "No action with id: $Run"
+        throw "No action with id: $ActionId"
     }
 
     $resolved = Resolve-Action -Action $action
@@ -491,52 +756,223 @@ if ($Run) {
     exit $exitCode
 }
 
-while ($true) {
-    Clear-Host
-    Write-Host $manifest.Name
-    if ($manifest.Description) {
-        Write-Host $manifest.Description
-    }
-    Write-Host "OS: $(Get-HostOSName)"
-    Write-Host "Manifest: $resolvedManifestDir"
-    Write-Host ""
+function Show-ActionMenu {
+    param(
+        [bool]$AllowBack
+    )
 
-    if ($actions.Count -eq 0) {
-        throw "No actions found."
-    }
-
-    for ($i = 0; $i -lt $actions.Count; $i++) {
-        $action = $actions[$i]
-        Write-Host ('{0,2}. {1} [{2}]' -f ($i + 1), $action.Title, $action.ID)
-        if ($action.Description) {
-            Write-Host "    $($action.Description)"
+    while ($true) {
+        Clear-Host
+        Write-Host $script:CurrentManifestName
+        if ($script:CurrentManifestDescription) {
+            Write-Host $script:CurrentManifestDescription
         }
+        Write-Host "Project: $($script:CurrentProjectId)"
+        Write-Host "Project directory: $($script:CurrentProjectDir)"
+        if ($script:CurrentWorkspaceDir) {
+            Write-Host "Workspace: $($script:CurrentWorkspaceDir)"
+        }
+        Write-Host "OS: $(Get-HostOSName)"
+        Write-Host ''
+
+        if ($script:CurrentActions.Count -eq 0) {
+            throw "No actions found."
+        }
+
+        for ($i = 0; $i -lt $script:CurrentActions.Count; $i++) {
+            $action = $script:CurrentActions[$i]
+            Write-Host ('{0,2}. {1} [{2}]' -f ($i + 1), $action.Title, $action.ID)
+            if ($action.Description) {
+                Write-Host "    $($action.Description)"
+            }
+        }
+
+        Write-Host ''
+        if ($AllowBack) {
+            $selection = Read-Host 'Select an action number, b to go back, or q to quit'
+        } else {
+            $selection = Read-Host 'Select an action number, or q to quit'
+        }
+
+        if ($selection -match '^(q|quit|exit)$') {
+            exit 0
+        }
+        if ($AllowBack -and $selection -match '^(b|back)$') {
+            return
+        }
+
+        $index = 0
+        if (-not [int]::TryParse($selection, [ref]$index)) {
+            continue
+        }
+        if ($index -lt 1 -or $index -gt $script:CurrentActions.Count) {
+            continue
+        }
+
+        $action = $script:CurrentActions[$index - 1]
+        $resolved = Resolve-Action -Action $action
+
+        Clear-Host
+        Show-ActionPreview -Action $action -Resolved $resolved
+        $confirm = Read-Host 'Run this action? [Y/n]'
+        if ($confirm -match '^(n|no)$') {
+            continue
+        }
+
+        $null = Invoke-ResolvedAction -Action $action -Resolved $resolved
+        Read-Host 'Press Enter to return to the menu' | Out-Null
+    }
+}
+
+function Show-WorkspaceMenu {
+    param(
+        [string[]]$Projects
+    )
+
+    while ($true) {
+        Clear-Host
+        Write-Host 'PortUI Workspace'
+        Write-Host $WorkspaceDir
+        Write-Host "OS: $(Get-HostOSName)"
+        Write-Host ''
+
+        if ($Projects.Count -eq 0) {
+            throw "No PortUI projects found in workspace: $WorkspaceDir"
+        }
+
+        for ($i = 0; $i -lt $Projects.Count; $i++) {
+            $summary = Get-ManifestSummary -ResolvedManifestDir $Projects[$i]
+            Write-Host ('{0,2}. {1} [{2}]' -f ($i + 1), $summary.Name, $summary.ProjectId)
+            if ($summary.Description) {
+                Write-Host "    $($summary.Description)"
+            }
+        }
+
+        Write-Host ''
+        $selection = Read-Host 'Select a project number, or q to quit'
+        if ($selection -match '^(q|quit|exit)$') {
+            exit 0
+        }
+
+        $index = 0
+        if (-not [int]::TryParse($selection, [ref]$index)) {
+            continue
+        }
+        if ($index -lt 1 -or $index -gt $Projects.Count) {
+            continue
+        }
+
+        Load-ManifestContext -ResolvedManifestDir $Projects[$index - 1] -ResolvedWorkspaceDir $WorkspaceDir
+        Show-ActionMenu -AllowBack $true
+    }
+}
+
+if ($Help) {
+    Show-Usage
+    exit 0
+}
+
+if (-not [string]::IsNullOrWhiteSpace($InstallProject)) {
+    if (
+        -not [string]::IsNullOrWhiteSpace($ManifestDir) -or
+        -not [string]::IsNullOrWhiteSpace($WorkspaceDir) -or
+        -not [string]::IsNullOrWhiteSpace($Project) -or
+        $ListProjects -or
+        $List -or
+        -not [string]::IsNullOrWhiteSpace($Run)
+    ) {
+        throw '-InstallProject cannot be combined with runtime selection or action flags.'
     }
 
-    Write-Host ""
-    $selection = Read-Host 'Select an action number, or q to quit'
-    if ($selection -match '^(q|quit|exit)$') {
+    Install-PortUIProject -ProjectDir $InstallProject
+    exit 0
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ManifestDir) -and (
+    -not [string]::IsNullOrWhiteSpace($WorkspaceDir) -or
+    -not [string]::IsNullOrWhiteSpace($Project) -or
+    $ListProjects
+)) {
+    throw '-ManifestDir cannot be combined with workspace options.'
+}
+
+$defaultManifestDir = Join-Path $PSScriptRoot 'examples/demo'
+$defaultWorkspaceDir = Get-ResolvedDirectory -Path (Join-Path $PSScriptRoot '..')
+$mode = 'auto'
+$projects = @()
+
+if (-not [string]::IsNullOrWhiteSpace($ManifestDir)) {
+    $ManifestDir = Get-ResolvedDirectory -Path $ManifestDir
+    $mode = 'manifest'
+} elseif (-not [string]::IsNullOrWhiteSpace($WorkspaceDir)) {
+    $WorkspaceDir = Get-ResolvedDirectory -Path $WorkspaceDir
+    $projects = @(Get-ProjectManifestDirs -ResolvedWorkspaceDir $WorkspaceDir)
+    $mode = 'workspace'
+} else {
+    $WorkspaceDir = $defaultWorkspaceDir
+    $projects = @(Get-ProjectManifestDirs -ResolvedWorkspaceDir $WorkspaceDir)
+    if ($projects.Count -gt 0) {
+        $mode = 'workspace'
+    } elseif (-not [string]::IsNullOrWhiteSpace($Project) -or $ListProjects) {
+        throw "No PortUI workspace projects were discovered under $WorkspaceDir"
+    } else {
+        $ManifestDir = Get-ResolvedDirectory -Path $defaultManifestDir
+        $mode = 'manifest'
+    }
+}
+
+if ($mode -eq 'manifest') {
+    if (-not [string]::IsNullOrWhiteSpace($Project) -or $ListProjects) {
+        throw 'Project selection is only available in workspace mode.'
+    }
+
+    Load-ManifestContext -ResolvedManifestDir $ManifestDir -ResolvedWorkspaceDir ''
+
+    if ($List) {
+        Show-ActionList
         exit 0
     }
 
-    $index = 0
-    if (-not [int]::TryParse($selection, [ref]$index)) {
-        continue
-    }
-    if ($index -lt 1 -or $index -gt $actions.Count) {
-        continue
+    if (-not [string]::IsNullOrWhiteSpace($Run)) {
+        Invoke-ActionById -ActionId $Run
     }
 
-    $action = $actions[$index - 1]
-    $resolved = Resolve-Action -Action $action
-
-    Clear-Host
-    Show-ActionPreview -Action $action -Resolved $resolved
-    $confirm = Read-Host 'Run this action? [Y/n]'
-    if ($confirm -match '^(n|no)$') {
-        continue
-    }
-
-    $null = Invoke-ResolvedAction -Action $action -Resolved $resolved
-    Read-Host 'Press Enter to return to the menu' | Out-Null
+    Show-ActionMenu -AllowBack $false
+    exit 0
 }
+
+if ($projects.Count -eq 0) {
+    throw "No PortUI projects found in workspace: $WorkspaceDir"
+}
+
+if ($ListProjects) {
+    Show-ProjectList -Projects $projects
+    exit 0
+}
+
+if (-not [string]::IsNullOrWhiteSpace($Project)) {
+    $selectedManifest = Get-ProjectManifestDir -Projects $projects -TargetId $Project
+    if (-not $selectedManifest) {
+        throw "No project with id: $Project"
+    }
+
+    Load-ManifestContext -ResolvedManifestDir $selectedManifest -ResolvedWorkspaceDir $WorkspaceDir
+
+    if ($List) {
+        Show-ActionList
+        exit 0
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Run)) {
+        Invoke-ActionById -ActionId $Run
+    }
+
+    Show-ActionMenu -AllowBack $true
+    exit 0
+}
+
+if ($List -or -not [string]::IsNullOrWhiteSpace($Run)) {
+    throw 'Workspace mode requires -Project when using -List or -Run.'
+}
+
+Show-WorkspaceMenu -Projects $projects
