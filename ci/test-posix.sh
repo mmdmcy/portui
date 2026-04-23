@@ -27,6 +27,11 @@ printf '%s\n' "$home_output" | grep 'pathSep=' >/dev/null
 workspace_output=$(sh ./portui.sh --manifest-dir ./examples/demo --run list-workspace)
 printf '%s\n' "$workspace_output" | grep 'Status: exit code 0' >/dev/null
 
+interactive_output=$(sh ./portui.sh --manifest-dir ./examples/demo --run interactive-echo)
+printf '%s\n' "$interactive_output" | grep 'I/O: interactive terminal' >/dev/null
+printf '%s\n' "$interactive_output" | grep 'interactive=true' >/dev/null
+printf '%s\n' "$interactive_output" | grep 'Status: exit code 0' >/dev/null
+
 projects_output=$(sh ./portui.sh --workspace ./examples/workspace --list-projects)
 printf '%s\n' "$projects_output" | grep 'Alpha Workspace App \[alpha\]' >/dev/null
 printf '%s\n' "$projects_output" | grep 'Beta Hidden App \[beta\]' >/dev/null

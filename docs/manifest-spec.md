@@ -1,6 +1,8 @@
 # Manifest Spec
 
-PortUI is built around project-local apps.
+PortUI is built around project-local terminal apps. A PortUI app is just a manifest plus action files; the repo-local launcher scripts load those files and run the selected action.
+
+PortUI does not build executables. If your own project action runs a compiled binary, that binary is part of your project logic. The PortUI runtime only resolves variables, chooses the right per-OS command, previews it, and executes it.
 
 Main modes:
 
@@ -109,6 +111,7 @@ Core keys:
 - `TITLE`
 - `DESCRIPTION`
 - `TIMEOUT_SECONDS`
+- `INTERACTIVE`
 - `PROGRAM`
 - `ARGS`
 - `CWD`
@@ -131,6 +134,24 @@ Example:
 PROGRAM=git
 ARGS=status|--short|--branch
 ```
+
+## Interactive Actions
+
+Most actions are captured: PortUI runs the command, collects stdout/stderr, and prints a status block when it exits.
+
+Set `INTERACTIVE=true` for terminal apps that need direct stdin/stdout, such as a nested dashboard, REPL, editor, or full-screen TUI:
+
+```text
+ID=dashboard
+TITLE=Dashboard
+INTERACTIVE=true
+TIMEOUT_SECONDS=0
+CWD={{projectDir}}
+PROGRAM=go
+ARGS=run|./cmd/dashboard
+```
+
+When `INTERACTIVE=true`, the command inherits the terminal directly. `TIMEOUT_SECONDS=0` means no timeout.
 
 ## Built-In Variables
 
@@ -169,6 +190,8 @@ Later layers replace earlier `PROGRAM`, `ARGS`, and `CWD` values. Environment ov
 - repo-local `portui.sh`, `portui.ps1`, and `portui.cmd` wrappers call that vendored runtime
 - the runtime executes the resolved program directly with explicit argument arrays
 - the runtime changes into the resolved working directory before launch
+
+The wrappers are source files meant to be committed with your repo. They are not generated build artifacts and they are not replacements for your app code.
 
 ## Secondary Modes
 

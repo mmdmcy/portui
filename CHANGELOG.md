@@ -16,6 +16,8 @@ The format is intentionally lightweight and follows semantic versioning in pract
 - added new built-in variables: `projectDir`, `projectId`, and `workspaceDir`
 - changed the default startup behavior to prefer workspace mode when sibling PortUI projects are present
 - added workspace example projects and expanded smoke tests to cover discovery and per-project dispatch
+- added `INTERACTIVE=true` actions for nested terminal dashboards, REPLs, and full-screen TUIs
+- fixed PowerShell argument forwarding for captured actions and documented that PortUI is not an executable builder
 
 ## [0.1.0] - 2026-04-22
 

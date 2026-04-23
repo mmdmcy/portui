@@ -1,17 +1,54 @@
 # PortUI
 
-PortUI is a zero-dependency cross-platform terminal engine for project-local TUIs.
+PortUI is a zero-dependency cross-platform terminal runtime for project-local TUIs.
 
-The two workflows it is meant to support are:
+The simple mental model:
 
-- clone `portui` into a new idea folder and start working there immediately
-- clone `portui` into an existing project, connect the wires, and use PortUI as that repo's portable TUI base
+- `portui/` or `.portui/` is your app: a manifest plus action files.
+- `portui.sh`, `portui.ps1`, and `portui.cmd` are tiny launchers for Linux/macOS, PowerShell, and Command Prompt.
+- `.portui-runtime/` is the vendored engine that those launchers call.
 
-PortUI is not meant to force a central global install. The main idea is to reuse one portable TUI engine across repos instead of rebuilding terminal glue from scratch every time.
+That is the whole shape. PortUI is not a GUI toolkit, package manager, global install, or executable builder. A repo should be cloneable on Linux, macOS, or Windows and then runnable from its own local launcher scripts.
+
+## What It Feels Like To Use
+
+From inside any project that has PortUI installed:
+
+Linux or macOS:
+
+```bash
+sh ./portui.sh
+```
+
+Windows PowerShell:
+
+```powershell
+.\portui.ps1
+```
+
+Command Prompt:
+
+```cmd
+portui.cmd
+```
+
+That opens a terminal menu. You can also skip the menu for scripts and CI:
+
+```bash
+sh ./portui.sh --list
+sh ./portui.sh --run doctor
+```
+
+```powershell
+.\portui.ps1 -List
+.\portui.ps1 -Run doctor
+```
+
+If an action runs a compiled program, that compiled program is your project logic, not PortUI itself. The built-in `{{exeSuffix}}` variable only exists so an action can say `mytool{{exeSuffix}}` when it really does need `mytool.exe` on Windows.
 
 ## New Idea Workflow
 
-You can clone `portui` into a new folder and use it right away because the repo now ships with a starter app in [`.portui/`](./.portui).
+You can clone `portui` into a new folder and use it right away because this repo ships with a starter app in [`.portui/`](./.portui).
 
 Linux or macOS:
 
@@ -29,7 +66,7 @@ cd my-idea
 .\portui.ps1 -List
 ```
 
-That starter app is only a base. You then edit `.portui/manifest.env` and `.portui/actions/` to turn the clone into your actual project.
+That starter app is only a base. Edit `.portui/manifest.env` and `.portui/actions/` to turn the clone into your actual project.
 
 ## Existing Project Workflow
 
@@ -78,7 +115,7 @@ At that point the target repo is self-contained. You can delete the temporary Po
 
 ## Using PortUI Inside A Repo
 
-Once a repo has vendored PortUI, use the repo-local entrypoints:
+Once a repo has vendored PortUI, use the repo-local launchers:
 
 Linux or macOS:
 
@@ -109,10 +146,10 @@ PortUI gives you one declarative place to define:
 - working directories
 - environment overrides
 - per-OS command differences
-- preview, confirmation, logs, and timeouts
+- preview, confirmation, logs, direct interactive mode, and timeouts
 - built-in path and project variables
 
-It does not replace your project logic. It standardizes the TUI layer around that logic.
+It does not replace your project logic. It standardizes the terminal menu layer around that logic.
 
 ## Project Layout
 
@@ -186,6 +223,15 @@ POSIX_ARGS=-c|printf '%s\n' 'project={{projectId}}' 'workspace={{workspaceDir}}'
 WINDOWS_PROGRAM=powershell
 WINDOWS_ARGS=-NoProfile|-Command|Write-Output 'project={{projectId}}'; Write-Output 'workspace={{workspaceDir}}'; Write-Output 'os={{os}}'
 ```
+
+For a nested terminal dashboard or full-screen TUI, add:
+
+```text
+INTERACTIVE=true
+TIMEOUT_SECONDS=0
+```
+
+That tells PortUI to hand the terminal directly to the action instead of capturing its output.
 
 See [docs/manifest-spec.md](./docs/manifest-spec.md) for the full format.
 

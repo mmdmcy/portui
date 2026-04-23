@@ -24,6 +24,11 @@ if ($homeOutput -notmatch 'pathSep=') { throw 'Show-home output missing pathSep.
 $workspaceOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -Run list-workspace | Out-String
 if ($workspaceOutput -notmatch 'Status: exit code 0') { throw 'List-workspace action did not exit cleanly.' }
 
+$interactiveOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -Run interactive-echo | Out-String
+if ($interactiveOutput -notmatch 'I/O: interactive terminal') { throw 'Interactive action output missing I/O marker.' }
+if ($interactiveOutput -notmatch 'interactive=true') { throw 'Interactive action output missing action output.' }
+if ($interactiveOutput -notmatch 'Status: exit code 0') { throw 'Interactive action did not exit cleanly.' }
+
 $projectsOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -WorkspaceDir .\examples\workspace -ListProjects | Out-String
 if ($projectsOutput -notmatch 'Alpha Workspace App \[alpha\]') { throw 'Workspace output missing alpha project.' }
 if ($projectsOutput -notmatch 'Beta Hidden App \[beta\]') { throw 'Workspace output missing beta project.' }
