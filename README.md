@@ -2,6 +2,8 @@
 
 PortUI is a zero-dependency cross-platform terminal runtime for project-local TUIs.
 
+If you are asking "isn't this just a TUI?", yes. PortUI is the repo-local terminal layer around one project's commands.
+
 The simple mental model:
 
 - `portui/` or `.portui/` is your app: a manifest plus action files.
@@ -44,7 +46,13 @@ sh ./portui.sh --run doctor
 .\portui.ps1 -Run doctor
 ```
 
-If an action runs a compiled program, that compiled program is your project logic, not PortUI itself. The built-in `{{exeSuffix}}` variable only exists so an action can say `mytool{{exeSuffix}}` when it really does need `mytool.exe` on Windows.
+## Why `.exe` Shows Up At All
+
+PortUI itself never turns into an `.exe`.
+
+- The launch surface is always the repo-local `portui.sh`, `portui.ps1`, or `portui.cmd` wrapper.
+- `{{exeSuffix}}` only exists for actions that need to call your own compiled tool as `mytool{{exeSuffix}}` on Windows.
+- If your project only runs scripts or `go run`, you can ignore `{{exeSuffix}}` completely.
 
 ## New Idea Workflow
 
@@ -181,7 +189,7 @@ Starter actions:
 - `list-files`
 - `git-status`
 
-If you want a clean project base, edit or replace those files after cloning.
+Those starter actions are intentionally plain scaffolding. Edit or replace them after cloning.
 
 ## Maintainer Commands
 
@@ -231,7 +239,7 @@ INTERACTIVE=true
 TIMEOUT_SECONDS=0
 ```
 
-That tells PortUI to hand the terminal directly to the action instead of capturing its output.
+That tells PortUI to hand the terminal directly to the action instead of capturing its output. This is the normal way to launch a nested TUI through PortUI.
 
 See [docs/manifest-spec.md](./docs/manifest-spec.md) for the full format.
 

@@ -151,7 +151,7 @@ PROGRAM=go
 ARGS=run|./cmd/dashboard
 ```
 
-When `INTERACTIVE=true`, the command inherits the terminal directly. `TIMEOUT_SECONDS=0` means no timeout.
+When `INTERACTIVE=true`, the command inherits the terminal directly. `TIMEOUT_SECONDS=0` means no timeout. This is the normal pattern when PortUI is launching another TUI.
 
 ## Built-In Variables
 
@@ -165,6 +165,8 @@ When `INTERACTIVE=true`, the command inherits the terminal directly. `TIMEOUT_SE
 - `{{pathSep}}`
 - `{{listSep}}`
 - `{{exeSuffix}}`
+
+`exeSuffix` is only for your own project commands. PortUI itself is always launched through the repo-local shell or PowerShell wrappers, not through a generated `.exe`.
 
 Behavior:
 
