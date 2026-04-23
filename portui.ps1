@@ -204,23 +204,23 @@ function Install-PortUIProject {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Destination (Join-Path $runtimeDir 'VERSION') -Force
     }
 
-    $shimSh = @"
+    $shimSh = (@'
 #!/bin/sh
 
 set -eu
 
-SCRIPT_DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
-exec sh "\$SCRIPT_DIR/.portui-runtime/portui.sh" --manifest-dir "\$SCRIPT_DIR/$manifestLeaf" "\$@"
-"@
-    $shimPs1 = @"
-\$scriptDir = Split-Path -Parent \$MyInvocation.MyCommand.Path
-& (Join-Path \$scriptDir '.portui-runtime\portui.ps1') -ManifestDir (Join-Path \$scriptDir '$manifestLeaf') @args
-exit \$LASTEXITCODE
-"@
-    $shimCmd = @"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec sh "$SCRIPT_DIR/.portui-runtime/portui.sh" --manifest-dir "$SCRIPT_DIR/{0}" "$@"
+'@) -f $manifestLeaf
+    $shimPs1 = (@'
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+& (Join-Path $scriptDir '.portui-runtime\portui.ps1') -ManifestDir (Join-Path $scriptDir '{0}') @args
+exit $LASTEXITCODE
+'@) -f $manifestLeaf
+    $shimCmd = (@'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0\.portui-runtime\portui.ps1" -ManifestDir "%~dp0\$manifestLeaf" %*
-"@
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0\.portui-runtime\portui.ps1" -ManifestDir "%~dp0{0}" %*
+'@) -f $manifestLeaf
 
     Write-TextFileNoBom -Path (Join-Path $resolvedProjectDir 'portui.sh') -Content $shimSh
     Write-TextFileNoBom -Path (Join-Path $resolvedProjectDir 'portui.ps1') -Content $shimPs1
