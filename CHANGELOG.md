@@ -18,6 +18,8 @@ The format is intentionally lightweight and follows semantic versioning in pract
 - added workspace example projects and expanded smoke tests to cover discovery and per-project dispatch
 - added `INTERACTIVE=true` actions for nested terminal dashboards, REPLs, and full-screen TUIs
 - fixed PowerShell argument forwarding for captured actions and documented that PortUI is not an executable builder
+- fixed PowerShell captured actions with large stdout/stderr streams so manifest commands cannot deadlock on full pipes
+- improved PowerShell captured-action errors when the configured program is missing
 
 ## [0.1.0] - 2026-04-22
 

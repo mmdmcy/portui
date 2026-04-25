@@ -12,8 +12,12 @@ $listOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -
 if ($listOutput -notmatch 'PortUI Demo') { throw 'List output missing manifest name.' }
 if ($listOutput -notmatch 'Git Version') { throw 'List output missing Git Version action.' }
 
-$gitOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -Run git-version | Out-String
-if ($gitOutput -notmatch 'git version') { throw 'Git action output missing git version.' }
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    $gitOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -Run git-version | Out-String
+    if ($gitOutput -notmatch 'git version') { throw 'Git action output missing git version.' }
+} else {
+    Write-Host 'Skipping Git Version smoke check because git is not on PATH.'
+}
 
 $doctorOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -Run doctor | Out-String
 if ($doctorOutput -notmatch 'shell=PowerShell') { throw 'Doctor output missing shell marker.' }
@@ -23,6 +27,30 @@ if ($homeOutput -notmatch 'pathSep=') { throw 'Show-home output missing pathSep.
 
 $workspaceOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -Run list-workspace | Out-String
 if ($workspaceOutput -notmatch 'Status: exit code 0') { throw 'List-workspace action did not exit cleanly.' }
+
+$largeOutputRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('portui-large-output-' + [System.Guid]::NewGuid().ToString('N'))
+$largeOutputManifest = Join-Path $largeOutputRoot 'portui'
+$largeOutputActions = Join-Path $largeOutputManifest 'actions'
+New-Item -ItemType Directory -Path $largeOutputActions -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $largeOutputManifest 'manifest.env') -Encoding utf8 -Value @'
+NAME=Large Output App
+DESCRIPTION=Exercises captured output that is larger than the OS pipe buffer.
+VARIABLE_repo={{projectDir}}
+'@
+Set-Content -LiteralPath (Join-Path $largeOutputActions '01-large-output.env') -Encoding utf8 -Value @'
+ID=large-output
+TITLE=Large Output
+DESCRIPTION=Emit enough captured stdout to prove PortUI drains pipes while the process is running.
+TIMEOUT_SECONDS=20
+CWD={{projectDir}}
+WINDOWS_PROGRAM=powershell
+WINDOWS_ARGS=-NoProfile|-Command|$chunk = 'x' * 200; for ($i = 0; $i -lt 8000; $i++) { Write-Output "line=$i $chunk" }
+'@
+
+$largeOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir $largeOutputManifest -Run large-output | Out-String
+if ($largeOutput -notmatch 'Status: exit code 0') { throw 'Large-output action did not exit cleanly.' }
+if ($largeOutput -notmatch 'line=7999') { throw 'Large-output action did not capture the tail of stdout.' }
+Remove-Item -LiteralPath $largeOutputRoot -Recurse -Force
 
 $interactiveOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -Run interactive-echo | Out-String
 if ($interactiveOutput -notmatch 'I/O: interactive terminal') { throw 'Interactive action output missing I/O marker.' }

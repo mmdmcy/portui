@@ -757,7 +757,19 @@ function Invoke-ResolvedAction {
     $process.StartInfo = $psi
 
     $start = Get-Date
-    [void]$process.Start()
+    try {
+        [void]$process.Start()
+    } catch {
+        $duration = [int]((Get-Date) - $start).TotalSeconds
+        Write-Host ""
+        Write-Host "Status: failed to start"
+        Write-Host "Duration: ${duration}s"
+        Write-Host ""
+        Write-Host $_.Exception.Message
+        return 1
+    }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
 
     $timedOut = $false
     if ($Action.TimeoutSeconds -gt 0) {
@@ -765,13 +777,15 @@ function Invoke-ResolvedAction {
             $timedOut = $true
             try { $process.Kill() } catch {}
             $process.WaitForExit()
+        } else {
+            $process.WaitForExit()
         }
     } else {
         $process.WaitForExit()
     }
 
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
     $duration = [int]((Get-Date) - $start).TotalSeconds
 
     Write-Host ""
