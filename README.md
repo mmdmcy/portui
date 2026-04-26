@@ -34,7 +34,7 @@ Command Prompt:
 portui.cmd
 ```
 
-That opens a terminal menu. You can also skip the menu for scripts and CI:
+That opens a quiet arrow-key terminal menu that repaints in place instead of filling scrollback. You can also skip the menu for scripts and CI:
 
 ```bash
 sh ./portui.sh --list

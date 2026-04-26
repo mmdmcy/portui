@@ -20,6 +20,7 @@ The format is intentionally lightweight and follows semantic versioning in pract
 - fixed PowerShell argument forwarding for captured actions and documented that PortUI is not an executable builder
 - fixed PowerShell captured actions with large stdout/stderr streams so manifest commands cannot deadlock on full pipes
 - improved PowerShell captured-action errors when the configured program is missing
+- replaced the interactive number prompts with a quiet alternate-screen selector on POSIX and PowerShell so arrow-key navigation does not grow terminal scrollback
 
 ## [0.1.0] - 2026-04-22
 

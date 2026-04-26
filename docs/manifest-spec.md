@@ -192,6 +192,7 @@ Later layers replace earlier `PROGRAM`, `ARGS`, and `CWD` values. Environment ov
 - repo-local `portui.sh`, `portui.ps1`, and `portui.cmd` wrappers call that vendored runtime
 - the runtime executes the resolved program directly with explicit argument arrays
 - the runtime changes into the resolved working directory before launch
+- interactive menus use an alternate terminal screen and arrow-key selection; command output is shown in normal scrollback only after an action is launched
 
 The wrappers are source files meant to be committed with your repo. They are not generated build artifacts and they are not replacements for your app code.
 
