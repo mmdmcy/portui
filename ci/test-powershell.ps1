@@ -19,6 +19,28 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
     Write-Host 'Skipping Git Version smoke check because git is not on PATH.'
 }
 
+$missingProgramRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('portui-missing-program-' + [System.Guid]::NewGuid().ToString('N'))
+$missingProgramManifest = Join-Path $missingProgramRoot 'portui'
+$missingProgramActions = Join-Path $missingProgramManifest 'actions'
+New-Item -ItemType Directory -Path $missingProgramActions -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $missingProgramManifest 'manifest.env') -Encoding utf8 -Value @'
+NAME=Missing Program App
+DESCRIPTION=Exercises missing program diagnostics.
+'@
+Set-Content -LiteralPath (Join-Path $missingProgramActions '01-missing-program.env') -Encoding utf8 -Value @'
+ID=missing-program
+TITLE=Missing Program
+DESCRIPTION=Attempt to run a command that should not exist.
+TIMEOUT_SECONDS=10
+PROGRAM=portui-missing-program-for-smoke-test
+'@
+$missingProgramOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir $missingProgramManifest -Run missing-program 2>&1 | Out-String
+$missingProgramExitCode = $LASTEXITCODE
+if ($missingProgramExitCode -ne 127) { throw "Missing-program action exited $missingProgramExitCode instead of 127." }
+if ($missingProgramOutput -notmatch 'Status: exit code 127') { throw 'Missing-program output missing exit code status.' }
+if ($missingProgramOutput -notmatch 'PortUI could not find the resolved program: portui-missing-program-for-smoke-test') { throw 'Missing-program output missing diagnostic.' }
+Remove-Item -LiteralPath $missingProgramRoot -Recurse -Force
+
 $doctorOutput = powershell -NoProfile -ExecutionPolicy Bypass -File .\portui.ps1 -ManifestDir .\examples\demo -Run doctor | Out-String
 if ($doctorOutput -notmatch 'shell=PowerShell') { throw 'Doctor output missing shell marker.' }
 

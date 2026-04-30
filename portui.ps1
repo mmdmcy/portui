@@ -668,6 +668,43 @@ function Format-DisplayCommand {
     return ($parts -join ' ')
 }
 
+function Test-PortUIProgramAvailable {
+    param(
+        [hashtable]$Resolved
+    )
+
+    $program = [string]$Resolved.Program
+    if ([string]::IsNullOrWhiteSpace($program)) {
+        return $false
+    }
+
+    if ($program -match '[\\/]') {
+        if ([System.IO.Path]::IsPathRooted($program)) {
+            return (Test-Path -LiteralPath $program -PathType Leaf)
+        }
+
+        return (Test-Path -LiteralPath (Join-Path $Resolved.Cwd $program) -PathType Leaf)
+    }
+
+    return ($null -ne (Get-Command -Name $program -ErrorAction SilentlyContinue))
+}
+
+function Write-PortUIMissingProgram {
+    param(
+        [hashtable]$Action,
+        [hashtable]$Resolved
+    )
+
+    Write-Host "PortUI could not find the resolved program: $($Resolved.Program)"
+    if ($Resolved.Program -match '[\\/]') {
+        Write-Host 'Check that the file exists and is executable for this operating system.'
+    } else {
+        Write-Host 'Install it and make sure it is available on PATH.'
+    }
+    Write-Host "Action: $($Action.Title) [$($Action.ID)]"
+    Write-Host "Working directory: $($Resolved.Cwd)"
+}
+
 function Build-ArgumentString {
     param(
         [string[]]$ArgList
@@ -713,10 +750,15 @@ function Invoke-ResolvedAction {
         $exitCode = 0
         try {
             Set-Location -LiteralPath $Resolved.Cwd
-            $resolvedArgs = @(Split-Args $Resolved.Args)
-            & $Resolved.Program @resolvedArgs
-            if ($null -ne $LASTEXITCODE) {
-                $exitCode = $LASTEXITCODE
+            if (-not (Test-PortUIProgramAvailable -Resolved $Resolved)) {
+                Write-PortUIMissingProgram -Action $Action -Resolved $Resolved
+                $exitCode = 127
+            } else {
+                $resolvedArgs = @(Split-Args $Resolved.Args)
+                & $Resolved.Program @resolvedArgs
+                if ($null -ne $LASTEXITCODE) {
+                    $exitCode = $LASTEXITCODE
+                }
             }
         } catch {
             Write-Host $_
@@ -739,6 +781,15 @@ function Invoke-ResolvedAction {
         Write-Host "Duration: ${duration}s"
         Write-Host ""
         return $exitCode
+    }
+
+    if (-not (Test-PortUIProgramAvailable -Resolved $Resolved)) {
+        Write-Host ""
+        Write-Host 'Status: exit code 127'
+        Write-Host 'Duration: 0s'
+        Write-Host ""
+        Write-PortUIMissingProgram -Action $Action -Resolved $Resolved
+        return 127
     }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo

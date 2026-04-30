@@ -724,6 +724,29 @@ display_command() {
     done
 }
 
+print_missing_program_message() {
+    printf '%s\n' "PortUI could not find the resolved program: $RESOLVED_PROGRAM"
+    case "$RESOLVED_PROGRAM" in
+        */*|*\\*)
+            printf '%s\n' "Check that the file exists and is executable for this operating system."
+            ;;
+        *)
+            printf '%s\n' "Install it and make sure it is available on PATH."
+            ;;
+    esac
+    printf '%s\n' "Action: $ACTION_TITLE [$ACTION_ID]"
+    printf '%s\n' "Working directory: $RESOLVED_CWD"
+}
+
+ensure_resolved_program_available() {
+    if command -v "$RESOLVED_PROGRAM" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    print_missing_program_message
+    return 127
+}
+
 run_resolved_action() {
     if is_truthy "$ACTION_INTERACTIVE"; then
         start_epoch=$(date +%s)
@@ -746,6 +769,8 @@ run_resolved_action() {
                 export "$env_key=$env_value"
             done
             export PORTUI_INTERACTIVE=1
+
+            ensure_resolved_program_available || exit 127
 
             old_ifs=$IFS
             IFS='|'
@@ -790,6 +815,8 @@ run_resolved_action() {
             env_value=${pair#*=}
             export "$env_key=$env_value"
         done
+
+        ensure_resolved_program_available || exit 127
 
         old_ifs=$IFS
         IFS='|'

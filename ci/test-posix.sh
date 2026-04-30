@@ -18,6 +18,24 @@ printf '%s\n' "$list_output" | grep 'Git Version' >/dev/null
 git_output=$(sh ./portui.sh --manifest-dir ./examples/demo --run git-version)
 printf '%s\n' "$git_output" | grep 'git version' >/dev/null
 
+missing_program_root=$(mktemp -d)
+mkdir -p "$missing_program_root/portui/actions"
+cat > "$missing_program_root/portui/manifest.env" <<'EOF'
+NAME=Missing Program App
+DESCRIPTION=Exercises missing program diagnostics.
+EOF
+cat > "$missing_program_root/portui/actions/01-missing-program.env" <<'EOF'
+ID=missing-program
+TITLE=Missing Program
+DESCRIPTION=Attempt to run a command that should not exist.
+TIMEOUT_SECONDS=10
+PROGRAM=portui-missing-program-for-smoke-test
+EOF
+missing_program_output=$(sh ./portui.sh --manifest-dir "$missing_program_root/portui" --run missing-program 2>&1 || true)
+printf '%s\n' "$missing_program_output" | grep 'Status: exit code 127' >/dev/null
+printf '%s\n' "$missing_program_output" | grep 'PortUI could not find the resolved program: portui-missing-program-for-smoke-test' >/dev/null
+rm -rf "$missing_program_root"
+
 doctor_output=$(sh ./portui.sh --manifest-dir ./examples/demo --run doctor)
 printf '%s\n' "$doctor_output" | grep 'shell=sh' >/dev/null
 

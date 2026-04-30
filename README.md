@@ -159,6 +159,8 @@ PortUI gives you one declarative place to define:
 
 It does not replace your project logic. It standardizes the terminal menu layer around that logic.
 
+If an action points at a program that is not installed on the host, PortUI exits with status `127` and prints the missing program, action, and working directory. The fix still belongs to the project using PortUI: install that project dependency or change the action wiring.
+
 ## Project Layout
 
 A PortUI app inside a repo can use either:
