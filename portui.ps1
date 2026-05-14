@@ -230,7 +230,10 @@ exit $LASTEXITCODE
 '@) -f $manifestLeaf
     $shimCmd = (@'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0\.portui-runtime\portui.ps1" -ManifestDir "%~dp0{0}" %*
+setlocal
+
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0\.portui-runtime\portui.ps1" -ManifestDir "%~dp0{0}" %*
+exit /b %ERRORLEVEL%
 '@) -f $manifestLeaf
 
     Write-TextFileNoBom -Path (Join-Path $resolvedProjectDir 'portui.sh') -Content $shimSh
